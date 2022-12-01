@@ -17,14 +17,20 @@ fn main() -> anyhow::Result<()> {
         .map(|elves_calories| elves_calories.iter().sum::<u64>())
         .collect::<Vec<_>>();
 
-    let calories_of_elf_with_maximum = calories_per_elf.iter().max().expect("No elf found");
+    let calories_of_elf_with_maximum = calories_per_elf
+        .iter()
+        .max()
+        .ok_or_else(|| anyhow::anyhow!("No elf found"))?;
     println!("calories_of_elf_with_maximum: {calories_of_elf_with_maximum}");
 
     // PART 2 - 3 minutes 56 seconds
-    calories_per_elf.sort();
-    let calories_of_top_three_elves = calories_per_elf[calories_per_elf.len() - 1]
-        + calories_per_elf[calories_per_elf.len() - 2]
-        + calories_per_elf[calories_per_elf.len() - 3];
+    calories_per_elf.sort_unstable();
+    if calories_per_elf.len() < 3 {
+        return Err(anyhow::anyhow!(
+            "Need at minimum 3 elves for the second puzzle part."
+        ));
+    }
+    let calories_of_top_three_elves = calories_per_elf.iter().rev().take(3).sum::<u64>();
     println!("calories_of_top_three_elves: {calories_of_top_three_elves}");
 
     Ok(())
