@@ -27,10 +27,48 @@ fn main() -> anyhow::Result<()> {
         .into_iter()
         .sum::<u32>();
     println!("sum_of_priorities: {sum_of_priorities}");
+
+    // PART 2 - 26 minutes 25 seconds
+    let sum_of_badge_priorities = INPUT
+        .lines()
+        .map(Backpack::from_str)
+        .collect::<Result<Vec<_>, _>>()?
+        .chunks(3)
+        .enumerate()
+        .map(|(index, elf_group)| {
+            let containing_elements = elf_group.iter().fold(None, |store, backpack| match store {
+                None => Some(backpack.full_inventory.chars().unique().collect::<Vec<_>>()),
+                Some(mut s) => {
+                    s.retain(|c| backpack.full_inventory.contains(|c2| c2 == *c));
+                    Some(s)
+                }
+            });
+            match containing_elements {
+                None => Err(anyhow::anyhow!("Elf group #{index} is empty.")),
+                Some(items) if items.len() > 1 => Err(anyhow::anyhow!(
+                    "Elf group #{index} has {} shared items ({:?}).",
+                    items.len(),
+                    items
+                )),
+                Some(items) => items
+                    .first()
+                    .copied()
+                    .ok_or_else(|| anyhow::anyhow!("Elf group #{index} has no shared item.")),
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(BackpackItem)
+        .map(BackpackItem::convert_item_into_priority)
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .sum::<u32>();
+    println!("sum_of_badge_priorities: {sum_of_badge_priorities}");
     Ok(())
 }
 
 struct Backpack {
+    full_inventory: String,
     first_compartment: String,
     second_compartment: String,
 }
@@ -39,17 +77,8 @@ impl Backpack {
     fn find_item_type_which_is_in_both_compartments(
         &self,
     ) -> Result<Option<BackpackItem>, anyhow::Error> {
-        let wrongly_stored_items_found = self
-            .first_compartment
-            .chars()
-            .filter_map(|first_item| {
-                self.second_compartment
-                    .chars()
-                    .any(|second_item| second_item == first_item)
-                    .then_some(first_item)
-            })
-            .unique()
-            .collect::<Vec<_>>();
+        let wrongly_stored_items_found =
+            find_chars_found_in_both(&self.first_compartment, &self.second_compartment);
         match wrongly_stored_items_found.len() {
             0 => Ok(None),
             1 => Ok(wrongly_stored_items_found
@@ -71,6 +100,7 @@ impl FromStr for Backpack {
         if char_count.rem(2) == 0 {
             let half_char_count = char_count.div(2);
             Ok(Self {
+                full_inventory: s.to_string(),
                 first_compartment: s.chars().take(half_char_count).collect::<String>(),
                 second_compartment: s.chars().skip(half_char_count).collect::<String>(),
             })
@@ -105,4 +135,17 @@ impl BackpackItem {
             .checked_sub(offset)
             .ok_or_else(|| anyhow::anyhow!("Could not convert item into priority"))
     }
+}
+
+fn find_chars_found_in_both(first: &str, second: &str) -> Vec<char> {
+    first
+        .chars()
+        .filter_map(|first_item| {
+            second
+                .chars()
+                .any(|second_item| second_item == first_item)
+                .then_some(first_item)
+        })
+        .unique()
+        .collect::<Vec<_>>()
 }
