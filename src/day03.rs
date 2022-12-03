@@ -9,12 +9,15 @@ use itertools::Itertools;
 const INPUT: &str = include_str!("../inputs/day03.input");
 
 fn main() -> anyhow::Result<()> {
-    // PART 1 - 47 minutes 17 seconds
-    let sum_of_priorities = INPUT
+    let backpacks = INPUT
         .lines()
-        .map(Backpack::from_str)
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
+        .enumerate()
+        .map(|(index, line)| Backpack::from_str(line).context(format!("in line #{index}")))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // PART 1 - 47 minutes 17 seconds
+    let sum_of_priorities = backpacks
+        .iter()
         .enumerate()
         .map(|(index, backpack)| {
             backpack
@@ -35,10 +38,7 @@ fn main() -> anyhow::Result<()> {
     println!("sum_of_priorities: {sum_of_priorities}");
 
     // PART 2 - 26 minutes 25 seconds
-    let sum_of_badge_priorities = INPUT
-        .lines()
-        .map(Backpack::from_str)
-        .collect::<Result<Vec<_>, _>>()?
+    let sum_of_badge_priorities = backpacks
         .chunks(3)
         .enumerate()
         .map(|(index, elf_group)| {
@@ -46,7 +46,12 @@ fn main() -> anyhow::Result<()> {
         })
         .collect::<Result<Vec<_>, _>>()?
         .into_iter()
-        .map(BackpackItem::convert_item_into_priority)
+        .enumerate()
+        .map(|(index, backpack_item)| {
+            backpack_item
+                .convert_item_into_priority()
+                .context(format!("in backpack #{index}"))
+        })
         .collect::<Result<Vec<_>, _>>()?
         .into_iter()
         .sum::<u32>();
@@ -85,7 +90,7 @@ impl Backpack {
                 .first()
                 .copied()
                 .copied()
-                .ok_or_else(|| anyhow::anyhow!("Found not items common in both compartments."))
+                .ok_or_else(|| anyhow::anyhow!("Found no items common in both compartments."))
         }
     }
 }
