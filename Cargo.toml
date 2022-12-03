@@ -17,5 +17,10 @@ name = "day01"
 path = "src/day02.rs"
 name = "day02"
 
+[[bin]]
+path = "src/day03.rs"
+name = "day03"
+
 [dependencies]
 anyhow = "1.0.66"
+itertools = "0.10.5"
