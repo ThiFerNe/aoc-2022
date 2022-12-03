@@ -1,7 +1,9 @@
+use std::hash::Hash;
 use std::ops::{Div, Rem};
 use std::str::FromStr;
 
 use anyhow::Context;
+
 use itertools::Itertools;
 
 const INPUT: &str = include_str!("../inputs/day03.input");
@@ -16,13 +18,17 @@ fn main() -> anyhow::Result<()> {
         .enumerate()
         .map(|(index, backpack)| {
             backpack
-                .find_item_type_which_is_in_both_compartments()
-                .map(|option| option.ok_or_else(|| anyhow::anyhow!("Did not find a shared item")))
-                .context(format!("in Backpack no. {index}"))
+                .find_item_type_common_in_both_compartments()
+                .context(format!("in backpack #{index}"))
         })
-        .collect::<Result<Result<Vec<BackpackItem>, _>, _>>()??
+        .collect::<Result<Vec<BackpackItem>, _>>()?
         .into_iter()
-        .map(BackpackItem::convert_item_into_priority)
+        .enumerate()
+        .map(|(index, backpack_item)| {
+            backpack_item
+                .convert_item_into_priority()
+                .context(format!("in backpack #{index}"))
+        })
         .collect::<Result<Vec<u32>, _>>()?
         .into_iter()
         .sum::<u32>();
@@ -36,29 +42,10 @@ fn main() -> anyhow::Result<()> {
         .chunks(3)
         .enumerate()
         .map(|(index, elf_group)| {
-            let containing_elements = elf_group.iter().fold(None, |store, backpack| match store {
-                None => Some(backpack.full_inventory.chars().unique().collect::<Vec<_>>()),
-                Some(mut s) => {
-                    s.retain(|c| backpack.full_inventory.contains(|c2| c2 == *c));
-                    Some(s)
-                }
-            });
-            match containing_elements {
-                None => Err(anyhow::anyhow!("Elf group #{index} is empty.")),
-                Some(items) if items.len() > 1 => Err(anyhow::anyhow!(
-                    "Elf group #{index} has {} shared items ({:?}).",
-                    items.len(),
-                    items
-                )),
-                Some(items) => items
-                    .first()
-                    .copied()
-                    .ok_or_else(|| anyhow::anyhow!("Elf group #{index} has no shared item.")),
-            }
+            find_elf_group_badge(elf_group).context(format!("in elf group #{index}"))
         })
         .collect::<Result<Vec<_>, _>>()?
         .into_iter()
-        .map(BackpackItem)
         .map(BackpackItem::convert_item_into_priority)
         .collect::<Result<Vec<_>, _>>()?
         .into_iter()
@@ -68,26 +55,37 @@ fn main() -> anyhow::Result<()> {
 }
 
 struct Backpack {
-    full_inventory: String,
-    first_compartment: String,
-    second_compartment: String,
+    items: Vec<BackpackItem>,
 }
 
 impl Backpack {
-    fn find_item_type_which_is_in_both_compartments(
-        &self,
-    ) -> Result<Option<BackpackItem>, anyhow::Error> {
-        let wrongly_stored_items_found =
-            find_chars_found_in_both(&self.first_compartment, &self.second_compartment);
-        match wrongly_stored_items_found.len() {
-            0 => Ok(None),
-            1 => Ok(wrongly_stored_items_found
+    fn split_compartments(&self) -> anyhow::Result<(&[BackpackItem], &[BackpackItem])> {
+        let half_size = self.items.len().div(2);
+        Ok((
+            self.items
+                .get(..half_size)
+                .ok_or_else(|| anyhow::anyhow!("Could not get first half of backpack items."))?,
+            self.items
+                .get(half_size..)
+                .ok_or_else(|| anyhow::anyhow!("Could not get second half of backpack items."))?,
+        ))
+    }
+
+    fn find_item_type_common_in_both_compartments(&self) -> anyhow::Result<BackpackItem> {
+        let (first_compartment, second_compartment) = self.split_compartments()?;
+        let common_in_both = find_common_item_types(first_compartment, second_compartment);
+        if common_in_both.len() > 1 {
+            Err(anyhow::anyhow!(
+                "Found {} items ({:?}) common in both compartments ",
+                common_in_both.len(),
+                common_in_both
+            ))
+        } else {
+            common_in_both
                 .first()
                 .copied()
-                .map(BackpackItem)),
-            n => Err(anyhow::anyhow!(
-                "Found {n} items multiple times in the second compartment"
-            )),
+                .copied()
+                .ok_or_else(|| anyhow::anyhow!("Found not items common in both compartments."))
         }
     }
 }
@@ -96,14 +94,12 @@ impl FromStr for Backpack {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let char_count = s.chars().count();
-        if char_count.rem(2) == 0 {
-            let half_char_count = char_count.div(2);
-            Ok(Self {
-                full_inventory: s.to_string(),
-                first_compartment: s.chars().take(half_char_count).collect::<String>(),
-                second_compartment: s.chars().skip(half_char_count).collect::<String>(),
-            })
+        let items = s
+            .chars()
+            .map(BackpackItem::try_from)
+            .collect::<Result<Vec<_>, _>>()?;
+        if items.len().rem(2) == 0 {
+            Ok(Self { items })
         } else {
             Err(anyhow::anyhow!(
                 "Items in the backpack are not evenly distributed."
@@ -112,40 +108,77 @@ impl FromStr for Backpack {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash)]
 struct BackpackItem(char);
+
+impl TryFrom<char> for BackpackItem {
+    type Error = anyhow::Error;
+
+    fn try_from(value: char) -> Result<Self, Self::Error> {
+        match value {
+            'a'..='z' | 'A'..='Z' => Ok(Self(value)),
+            _ => Err(anyhow::anyhow!(
+                "Item '{}' is not within specified range of a..z or A..Z.",
+                value
+            )),
+        }
+    }
+}
 
 impl BackpackItem {
     fn convert_item_into_priority(self) -> Result<u32, anyhow::Error> {
         let offset = match self.0 {
             'a'..='z' => u32::from('a')
                 .checked_sub(1)
-                .ok_or_else(|| anyhow::anyhow!("Could not subtract 1 from 'a'.")),
+                .ok_or_else(|| anyhow::anyhow!("Could not subtract 1 from u32::from('a').")),
             'A'..='Z' => u32::from('A')
                 .checked_sub(27)
-                .ok_or_else(|| anyhow::anyhow!("Could not subtract 27 from 'A'.")),
-            _ => {
-                return Err(anyhow::anyhow!(
-                    "Item '{}' is not within specified range of a..z or A..Z.",
-                    self.0
-                ))
-            }
+                .ok_or_else(|| anyhow::anyhow!("Could not subtract 27 from u32::from('A').")),
+            value => Err(anyhow::anyhow!(
+                "Item '{}' is not within specified range of a..z or A..Z.",
+                value
+            )),
         }?;
-        u32::from(self.0)
-            .checked_sub(offset)
-            .ok_or_else(|| anyhow::anyhow!("Could not convert item into priority"))
+        u32::from(self.0).checked_sub(offset).ok_or_else(|| {
+            anyhow::anyhow!("Could not convert backpack item '{}' into priority", self.0)
+        })
     }
 }
 
-fn find_chars_found_in_both(first: &str, second: &str) -> Vec<char> {
+fn find_common_item_types<'item, T>(first: &'item [T], second: &'item [T]) -> Vec<&'item T>
+where
+    T: Eq + PartialEq + Hash,
+{
     first
-        .chars()
+        .iter()
         .filter_map(|first_item| {
             second
-                .chars()
+                .iter()
                 .any(|second_item| second_item == first_item)
                 .then_some(first_item)
         })
         .unique()
         .collect::<Vec<_>>()
+}
+
+fn find_elf_group_badge(elf_group: &[Backpack]) -> anyhow::Result<BackpackItem> {
+    let containing_elements = elf_group.iter().fold(None, |store, backpack| match store {
+        None => Some(backpack.items.clone()),
+        Some(mut s) => {
+            s.retain(|backpack_item| backpack.items.contains(backpack_item));
+            Some(s)
+        }
+    });
+    match containing_elements {
+        None => Err(anyhow::anyhow!("Elf group is empty.")),
+        Some(items) if items.len() > 1 => Err(anyhow::anyhow!(
+            "Elf group has {} shared items ({:?}).",
+            items.len(),
+            items
+        )),
+        Some(items) => items
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("Elf group has no shared item.")),
+    }
 }
