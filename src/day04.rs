@@ -7,17 +7,32 @@ fn main() -> anyhow::Result<()> {
     let part_1_solution = calculate_count_of_fully_containing_pairs(INPUT)?;
     println!("part_1_solution: {part_1_solution}");
 
+    // PART 2 - 6 minutes 45 seconds
+    let part_2_solution = calculate_count_of_overlapping_at_all_pairs(INPUT)?;
+    println!("part_2_solution: {part_2_solution}");
+
     Ok(())
 }
 
 fn calculate_count_of_fully_containing_pairs(input: &str) -> anyhow::Result<usize> {
-    Ok(input
-        .lines()
-        .map(ElfPair::from_str)
-        .collect::<Result<Vec<_>, _>>()?
+    Ok(parse_elf_pairs(input)?
         .into_iter()
         .filter(|elf_pair| elf_pair.one_fully_contains_the_other())
         .count())
+}
+
+fn calculate_count_of_overlapping_at_all_pairs(input: &str) -> anyhow::Result<usize> {
+    Ok(parse_elf_pairs(input)?
+        .into_iter()
+        .filter(|elf_pair| elf_pair.are_overlapping_at_all())
+        .count())
+}
+
+fn parse_elf_pairs(input: &str) -> anyhow::Result<Vec<ElfPair>> {
+    input
+        .lines()
+        .map(ElfPair::from_str)
+        .collect::<Result<Vec<_>, _>>()
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
@@ -26,6 +41,10 @@ struct ElfPair(SectionAssignment, SectionAssignment);
 impl ElfPair {
     fn one_fully_contains_the_other(self) -> bool {
         self.0.fully_contains(self.1) || self.1.fully_contains(self.0)
+    }
+
+    fn are_overlapping_at_all(self) -> bool {
+        self.0.overlaps(self.1) // TODO || self.1.overlaps(self.0)
     }
 }
 
@@ -58,6 +77,10 @@ struct SectionAssignment {
 impl SectionAssignment {
     fn fully_contains(self, other: Self) -> bool {
         self.from <= other.from && self.to >= other.to
+    }
+
+    fn overlaps(self, other: Self) -> bool {
+        self.from <= other.to && self.to >= other.from
     }
 }
 
@@ -110,6 +133,17 @@ mod tests {
 
         // Assert
         assert_eq!(count, 2);
+
+        Ok(())
+    }
+
+    #[test]
+    fn default_test_part_2() -> anyhow::Result<()> {
+        // Act
+        let count = calculate_count_of_overlapping_at_all_pairs(TEST_INPUT)?;
+
+        // Assert
+        assert_eq!(count, 4);
 
         Ok(())
     }
