@@ -1,5 +1,7 @@
 use std::str::FromStr;
 
+use anyhow::Context;
+
 const INPUT: &str = include_str!("../inputs/day04.input");
 
 fn main() -> anyhow::Result<()> {
@@ -31,7 +33,8 @@ fn calculate_count_of_overlapping_at_all_pairs(input: &str) -> anyhow::Result<us
 fn parse_elf_pairs(input: &str) -> anyhow::Result<Vec<ElfPair>> {
     input
         .lines()
-        .map(ElfPair::from_str)
+        .enumerate()
+        .map(|(index, line)| ElfPair::from_str(line).context(format!("in line #{index}")))
         .collect::<Result<Vec<_>, _>>()
 }
 
@@ -44,7 +47,7 @@ impl ElfPair {
     }
 
     fn are_overlapping_at_all(self) -> bool {
-        self.0.overlaps(self.1) // TODO || self.1.overlaps(self.0)
+        self.0.overlaps(self.1)
     }
 }
 
