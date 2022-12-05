@@ -11,6 +11,11 @@ fn main() -> anyhow::Result<()> {
     // PART 1 - 1 hour 37 minutes 4 seconds
     let crane_message = calculate_resulting_crane_message(INPUT)?;
     println!("crane_message: {crane_message}");
+
+    // PART 2 - 4 minutes 27 seconds
+    let crane_message_crane_9001 = calculate_resulting_crane_message_crane_9001(INPUT)?;
+    println!("crane_message_crane_9001: {crane_message_crane_9001}");
+
     Ok(())
 }
 
@@ -19,6 +24,21 @@ fn calculate_resulting_crane_message(input: &str) -> anyhow::Result<String> {
     while !procedure.is_finished() {
         println!("{:?}", procedure.crate_stacks);
         procedure.rearrange();
+    }
+    println!("{:?}", procedure.crate_stacks);
+    Ok(procedure
+        .crate_stacks
+        .stacks
+        .iter()
+        .map(|stack| stack.last().copied().unwrap_or(' '))
+        .collect::<String>())
+}
+
+fn calculate_resulting_crane_message_crane_9001(input: &str) -> anyhow::Result<String> {
+    let mut procedure = RearrangementProcedure::from_str(input)?;
+    while !procedure.is_finished() {
+        println!("{:?}", procedure.crate_stacks);
+        procedure.rearrange_as_crate_mover_9001();
     }
     println!("{:?}", procedure.crate_stacks);
     Ok(procedure
@@ -54,6 +74,31 @@ impl RearrangementProcedure {
                 temp.push(m.pop().unwrap());
             }
             for m in temp {
+                let mm: &mut Vec<char> = self
+                    .crate_stacks
+                    .stacks
+                    .get_mut(usize::from(next_procedure.to) - 1)
+                    .unwrap();
+                mm.push(m);
+            }
+        }
+    }
+
+    fn rearrange_as_crate_mover_9001(&mut self) {
+        if !self.procedure_steps.is_empty() {
+            let next_procedure = self.procedure_steps.remove(0);
+            println!("next_procedure: {next_procedure:?}");
+            let mut temp = Vec::with_capacity(next_procedure.count.into());
+            while temp.len() < next_procedure.count.into() {
+                let m: &mut Vec<char> = self
+                    .crate_stacks
+                    .stacks
+                    .get_mut(usize::from(next_procedure.from) - 1)
+                    .unwrap();
+                temp.push(m.pop().unwrap());
+            }
+            while !temp.is_empty() {
+                let m = temp.pop().unwrap();
                 let mm: &mut Vec<char> = self
                     .crate_stacks
                     .stacks
@@ -321,6 +366,82 @@ move 1 from 1 to 2";
             procedure.crate_stacks,
             CrateStacks {
                 stacks: vec![vec![], vec!['M', 'C'], vec!['P', 'D', 'N', 'Z'],]
+            }
+        );
+    }
+
+    #[test]
+    fn test_rearrangement_procedure_rearrange_as_crate_mover_9001() {
+        // Arrange
+        let mut procedure = RearrangementProcedure {
+            crate_stacks: CrateStacks {
+                stacks: vec![vec!['Z', 'N'], vec!['M', 'C', 'D'], vec!['P']],
+            },
+            procedure_steps: vec![
+                ProcedureStep {
+                    count: 1,
+                    from: 2,
+                    to: 1,
+                },
+                ProcedureStep {
+                    count: 3,
+                    from: 1,
+                    to: 3,
+                },
+                ProcedureStep {
+                    count: 2,
+                    from: 2,
+                    to: 1,
+                },
+                ProcedureStep {
+                    count: 1,
+                    from: 1,
+                    to: 2,
+                },
+            ],
+        };
+
+        // Act 1
+        procedure.rearrange_as_crate_mover_9001();
+
+        // Assert 1
+        assert_eq!(
+            procedure.crate_stacks,
+            CrateStacks {
+                stacks: vec![vec!['Z', 'N', 'D'], vec!['M', 'C'], vec!['P'],]
+            }
+        );
+
+        // Act 2
+        procedure.rearrange_as_crate_mover_9001();
+
+        // Assert 2
+        assert_eq!(
+            procedure.crate_stacks,
+            CrateStacks {
+                stacks: vec![vec![], vec!['M', 'C'], vec!['P', 'Z', 'N', 'D'],]
+            }
+        );
+
+        // Act 3
+        procedure.rearrange_as_crate_mover_9001();
+
+        // Assert 3
+        assert_eq!(
+            procedure.crate_stacks,
+            CrateStacks {
+                stacks: vec![vec!['M', 'C'], vec![], vec!['P', 'Z', 'N', 'D'],]
+            }
+        );
+
+        // Act 4
+        procedure.rearrange_as_crate_mover_9001();
+
+        // Assert 4
+        assert_eq!(
+            procedure.crate_stacks,
+            CrateStacks {
+                stacks: vec![vec!['M'], vec!['C'], vec!['P', 'Z', 'N', 'D'],]
             }
         );
     }
