@@ -50,7 +50,7 @@ impl RearrangementProcedure {
         self.rearrange(|target_stack, crates| {
             crates
                 .into_iter()
-                .for_each(|single_crate| target_stack.push(single_crate))
+                .for_each(|single_crate| target_stack.push(single_crate));
         })
     }
 
@@ -59,7 +59,7 @@ impl RearrangementProcedure {
             crates
                 .into_iter()
                 .rev()
-                .for_each(|single_crate| target_stack.push(single_crate))
+                .for_each(|single_crate| target_stack.push(single_crate));
         })
     }
 
