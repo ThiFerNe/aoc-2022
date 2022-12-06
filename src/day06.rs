@@ -27,8 +27,8 @@ fn calculate_last_index_of_first_non_repeating_char_sequence(
     let mut ring_buffer = Vec::with_capacity(sequence_length);
     for (index, char) in input.chars().enumerate() {
         if ring_buffer.len() == sequence_length {
+            // @lint: Don't know how to do that and whether it really benefits.
             #[allow(clippy::pattern_type_mismatch)]
-            // Don't know how to do that and whether it really benefits.
             let all_unequal = ring_buffer
                 .iter()
                 .enumerate()
