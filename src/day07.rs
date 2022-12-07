@@ -9,6 +9,10 @@ fn main() -> anyhow::Result<()> {
     let part_1_solution = calculate_sum_of_directories_with_total_size_at_most(INPUT, 100_000)?;
     println!("part_1_solution: {part_1_solution}");
 
+    // PART 2 - 10 minutes 10 seconds
+    let part_2_solution = calculate_total_size_of_deletable_directories(INPUT, 70000000, 30000000)?;
+    println!("part_2_solution: {part_2_solution}");
+
     Ok(())
 }
 
@@ -42,6 +46,42 @@ fn calculate_sum_of_directories_with_total_size_at_most(
         .filter(|aa| **aa <= total_size_at_most)
         .sum::<usize>();
     Ok(mmm)
+}
+
+fn calculate_total_size_of_deletable_directories(
+    input: &str,
+    total_disk_space_available: usize,
+    needed_unused_space: usize,
+) -> anyhow::Result<usize> {
+    let derived_filesystem = CommandHistory::from_str(input)?
+        .derive_filesystem()?
+        .ok_or_else(|| anyhow::anyhow!("No filesystem found."))?;
+    fn calculate_all_directory_sizes(e: &FilesystemElement) -> Vec<usize> {
+        match e {
+            FilesystemElement::Directory { children, .. } => {
+                let mut output = Vec::new();
+                output.push(e.size());
+                output.extend_from_slice(
+                    children
+                        .iter()
+                        .filter(|ee| ee.is_directory())
+                        .flat_map(calculate_all_directory_sizes)
+                        .collect::<Vec<_>>()
+                        .as_slice(),
+                );
+                output
+            }
+            FilesystemElement::File { .. } => Vec::new(),
+        }
+    }
+    let disk_usage = derived_filesystem.0.size();
+    let amount_to_free = disk_usage - (total_disk_space_available - needed_unused_space);
+    Ok(calculate_all_directory_sizes(&derived_filesystem.0)
+        .iter()
+        .filter(|size| **size >= amount_to_free)
+        .min()
+        .copied()
+        .ok_or_else(|| anyhow::anyhow!("There are no directories."))?)
 }
 
 struct CommandHistory(Vec<ExecutedCommand>);
@@ -395,6 +435,18 @@ $ ls
             format!("{derived_filesystem}").as_str(),
             TEST_VISUAL_REPRESENTATION
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_part_2_default() -> anyhow::Result<()> {
+        // Act
+        let total_size_of_deletable_directories =
+            calculate_total_size_of_deletable_directories(TEST_INPUT, 70_000_000, 30_000_000)?;
+
+        // Assert
+        assert_eq!(total_size_of_deletable_directories, 24_933_642);
 
         Ok(())
     }
