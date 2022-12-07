@@ -33,6 +33,10 @@ name = "day05"
 path = "src/day06.rs"
 name = "day06"
 
+[[bin]]
+path = "src/day07.rs"
+name = "day07"
+
 [dependencies]
 anyhow = "1.0.66"
 itertools = "0.10.5"
