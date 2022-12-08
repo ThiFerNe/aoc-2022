@@ -1,9 +1,8 @@
-use std::cmp::Ordering;
 use std::fmt::Display;
-use std::ops::Range;
 use std::str::FromStr;
 
 use anyhow::Context;
+use itertools::FoldWhile::{Continue, Done};
 
 use itertools::Itertools;
 
@@ -13,7 +12,7 @@ fn main() -> anyhow::Result<()> {
     let tree_map = TreeMap::from_str(INPUT)?;
 
     // PART 1 - 46 minutes 27 seconds
-    let part_1_solution = tree_map.calculate_visibility_map().count_visibles();
+    let part_1_solution = tree_map.calculate_visibility_map().count_visible_fields();
     println!("part_1_solution: {part_1_solution}");
 
     // PART 2 - 29 minutes 48 seconds
@@ -32,57 +31,54 @@ struct TreeMap(Vec<Vec<Tree>>);
 
 impl TreeMap {
     fn calculate_visibility_map(&self) -> VisibilityMap {
-        let check_line = |mut column_range: Range<usize>,
-                          column_index: usize,
-                          line_index: usize|
-         -> Visibility {
-            let any_bigger = column_range.any(|look_column_index| {
-                self.0[line_index][look_column_index].height
-                    >= self.0[line_index][column_index].height
-            });
-            if any_bigger {
-                Visibility::Invisible
-            } else {
-                Visibility::Visible
-            }
-        };
-        let check_column =
-            |mut line_range: Range<usize>, column_index: usize, line_index: usize| -> Visibility {
-                let any_bigger = line_range.any(|look_line_index| {
-                    self.0[look_line_index][column_index].height
-                        >= self.0[line_index][column_index].height
-                });
-                if any_bigger {
-                    Visibility::Invisible
-                } else {
-                    Visibility::Visible
-                }
-            };
         VisibilityMap(
             self.0
                 .iter()
                 .enumerate()
-                .map(|(line_index, tree_line)| {
-                    tree_line
+                .map(|(row_index, tree_row)| {
+                    tree_row
+                        .iter()
+                        .enumerate()
+                        .map(|(column_index, _)| self.calculate_visibility(column_index, row_index))
+                        .collect()
+                })
+                .collect(),
+        )
+    }
+
+    fn calculate_visibility(&self, column_index: usize, row_index: usize) -> Visibility {
+        let any_left_bigger = (0..column_index).any(|look_column_index| {
+            self.0[row_index][look_column_index].height >= self.0[row_index][column_index].height
+        });
+        let any_right_bigger =
+            ((column_index + 1)..self.0[row_index].len()).any(|look_column_index| {
+                self.0[row_index][look_column_index].height
+                    >= self.0[row_index][column_index].height
+            });
+        let any_top_bigger = (0..row_index).any(|look_row_index| {
+            self.0[look_row_index][column_index].height >= self.0[row_index][column_index].height
+        });
+        let any_bottom_bigger = ((row_index + 1)..self.0.len()).any(|look_row_index| {
+            self.0[look_row_index][column_index].height >= self.0[row_index][column_index].height
+        });
+        if any_left_bigger && any_right_bigger && any_top_bigger && any_bottom_bigger {
+            Visibility::Invisible
+        } else {
+            Visibility::Visible
+        }
+    }
+
+    fn calculate_scenic_score_map(&self) -> ScenicScoreMap {
+        ScenicScoreMap(
+            self.0
+                .iter()
+                .enumerate()
+                .map(|(row_index, tree_row)| {
+                    tree_row
                         .iter()
                         .enumerate()
                         .map(|(column_index, _)| {
-                            check_line(0..column_index, column_index, line_index)
-                                .and(|| {
-                                    check_line(
-                                        (column_index + 1)..(self.0[line_index].len()),
-                                        column_index,
-                                        line_index,
-                                    )
-                                })
-                                .and(|| check_column(0..line_index, column_index, line_index))
-                                .and(|| {
-                                    check_column(
-                                        (line_index + 1)..(self.0.len()),
-                                        column_index,
-                                        line_index,
-                                    )
-                                })
+                            self.calculate_scenic_score(column_index, row_index)
                         })
                         .collect()
                 })
@@ -90,63 +86,61 @@ impl TreeMap {
         )
     }
 
-    fn calculate_scenic_score_map(&self) -> ScenicScoreMap {
-        let check_line = |column_index: usize, line_index: usize, to_column_index: usize| -> u64 {
-            let increment = match column_index.cmp(&to_column_index) {
-                Ordering::Less => 1,
-                Ordering::Equal => return 0,
-                Ordering::Greater => -1,
-            };
-            let mut current_column_index = column_index as isize + increment;
-            while current_column_index != to_column_index as isize {
-                if self.0[line_index][current_column_index as usize].height
-                    >= self.0[line_index][column_index].height
-                {
-                    return (current_column_index - column_index as isize).abs() as u64;
-                }
-                current_column_index += increment;
-            }
-            return (to_column_index as isize - column_index as isize).abs() as u64;
-        };
-        let check_column = |column_index: usize, line_index: usize, to_line_index: usize| -> u64 {
-            let increment = match line_index.cmp(&to_line_index) {
-                Ordering::Less => 1,
-                Ordering::Equal => return 0,
-                Ordering::Greater => -1,
-            };
-            let mut current_line_index = line_index as isize + increment;
-            while current_line_index != to_line_index as isize {
-                if self.0[current_line_index as usize][column_index].height
-                    >= self.0[line_index][column_index].height
-                {
-                    return (current_line_index - line_index as isize).abs() as u64;
-                }
-                current_line_index += increment;
-            }
-            return (to_line_index as isize - line_index as isize).abs() as u64;
-        };
-        ScenicScoreMap(
-            self.0
-                .iter()
-                .enumerate()
-                .map(|(line_index, tree_line)| {
-                    tree_line
-                        .iter()
-                        .enumerate()
-                        .map(|(column_index, _)| {
-                            check_column(column_index, line_index, 0)
-                                * check_column(
-                                    column_index,
-                                    line_index,
-                                    self.0[line_index].len() - 1,
-                                )
-                                * check_line(column_index, line_index, 0)
-                                * check_line(column_index, line_index, self.0.len() - 1)
-                        })
-                        .map(ScenicScore)
-                        .collect()
+    fn calculate_scenic_score(&self, column_index: usize, row_index: usize) -> ScenicScore {
+        fn calculate<'a, I>(mut iterator: I, tree: &'a Tree) -> u64
+        where
+            I: Iterator<Item = &'a Tree>,
+        {
+            iterator
+                .fold_while(0, |view_distance, other_tree| {
+                    if other_tree.height >= tree.height {
+                        Done(view_distance + 1)
+                    } else {
+                        Continue(view_distance + 1)
+                    }
                 })
-                .collect(),
+                .into_inner()
+        }
+        fn by_column<I>(
+            iterator: I,
+            row_index: usize,
+            tree_map: &[Vec<Tree>],
+        ) -> impl Iterator<Item = &Tree>
+        where
+            I: Iterator<Item = usize>,
+        {
+            iterator.map(move |look_column_index| &tree_map[row_index][look_column_index])
+        }
+        fn by_row<I>(
+            iterator: I,
+            column_index: usize,
+            tree_map: &[Vec<Tree>],
+        ) -> impl Iterator<Item = &Tree>
+        where
+            I: Iterator<Item = usize>,
+        {
+            iterator.map(move |look_row_index| &tree_map[look_row_index][column_index])
+        }
+
+        let tree = &self.0[row_index][column_index];
+        let view_distance_left =
+            calculate(by_column((0..column_index).rev(), row_index, &self.0), tree);
+        let view_distance_right = calculate(
+            by_column(
+                (column_index + 1)..self.0[row_index].len(),
+                row_index,
+                &self.0,
+            ),
+            tree,
+        );
+        let view_distance_top =
+            calculate(by_row((0..row_index).rev(), column_index, &self.0), tree);
+        let view_distance_bottom = calculate(
+            by_row((row_index + 1)..self.0.len(), column_index, &self.0),
+            tree,
+        );
+        ScenicScore(
+            view_distance_left * view_distance_right * view_distance_top * view_distance_bottom,
         )
     }
 }
@@ -169,23 +163,26 @@ impl FromStr for TreeMap {
                     .collect::<Result<Vec<_>, _>>()
             })
             .collect::<Result<Vec<Vec<_>>, _>>()?;
-        let count_of_different_tree_map_line_lengths =
-            tree_map.iter().map(|vec| vec.len()).unique().count();
-        if count_of_different_tree_map_line_lengths == 1 {
+
+        let tree_map_line_lengths = tree_map.iter().map(|vec| vec.len());
+        if tree_map_line_lengths.clone().unique().count() == 1 {
             Ok(Self(tree_map))
         } else {
-            Err(anyhow::anyhow!("The input line lengths are not all the same length, found {count_of_different_tree_map_line_lengths} different line lengths."))
+            Err(anyhow::anyhow!(
+                "The input line lengths are not all the same length, found different line lengths ({:?}).",
+                tree_map_line_lengths.collect::<Vec<_>>()
+            ))
         }
     }
 }
 
 impl Display for TreeMap {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for (line_index, tree_line) in self.0.iter().enumerate() {
-            if line_index > 0 {
+        for (row_index, tree_row) in self.0.iter().enumerate() {
+            if row_index > 0 {
                 writeln!(f)?;
             }
-            for tree in tree_line {
+            for tree in tree_row {
                 write!(f, "{}", tree.height)?;
             }
         }
@@ -196,13 +193,6 @@ impl Display for TreeMap {
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 struct Tree {
     height: u8,
-}
-
-impl Tree {
-    #[allow(dead_code)]
-    fn of_height(height: u8) -> Self {
-        Self { height }
-    }
 }
 
 impl FromStr for Tree {
@@ -217,7 +207,7 @@ impl FromStr for Tree {
 struct VisibilityMap(Vec<Vec<Visibility>>);
 
 impl VisibilityMap {
-    fn count_visibles(&self) -> usize {
+    fn count_visible_fields(&self) -> usize {
         self.0
             .iter()
             .map(|line| {
@@ -235,24 +225,12 @@ enum Visibility {
     Invisible,
 }
 
-impl Visibility {
-    fn and<F>(&self, other: F) -> Self
-    where
-        F: Fn() -> Self,
-    {
-        match self {
-            Visibility::Visible => Visibility::Visible,
-            Visibility::Invisible => other(),
-        }
-    }
-}
-
 #[derive(Debug, Eq, PartialEq, Clone)]
 struct ScenicScoreMap(Vec<Vec<ScenicScore>>);
 
 impl ScenicScoreMap {
     fn find_highest_scenic_score(&self) -> Option<&ScenicScore> {
-        self.0.iter().flat_map(|line| line.iter().max()).max()
+        self.0.iter().flat_map(|row| row.iter().max()).max()
     }
 }
 
@@ -281,7 +259,7 @@ mod tests {
         let tree_map = TreeMap::from_str(TEST_INPUT)?;
 
         // Act
-        let visible_trees = tree_map.calculate_visibility_map().count_visibles();
+        let visible_trees = tree_map.calculate_visibility_map().count_visible_fields();
 
         // Assert
         assert_eq!(visible_trees, 21);
@@ -299,11 +277,11 @@ mod tests {
         assert_eq!(
             tree_map,
             TreeMap(vec![
-                vec![Tree::of_height(3), Tree::of_height(0), Tree::of_height(3), Tree::of_height(7), Tree::of_height(3)],
-                vec![Tree::of_height(2), Tree::of_height(5), Tree::of_height(5), Tree::of_height(1), Tree::of_height(2)],
-                vec![Tree::of_height(6), Tree::of_height(5), Tree::of_height(3), Tree::of_height(3), Tree::of_height(2)],
-                vec![Tree::of_height(3), Tree::of_height(3), Tree::of_height(5), Tree::of_height(4), Tree::of_height(9)],
-                vec![Tree::of_height(3), Tree::of_height(5), Tree::of_height(3), Tree::of_height(9), Tree::of_height(0)],
+                vec![Tree { height: 3 }, Tree { height: 0 }, Tree { height: 3 }, Tree { height: 7 }, Tree { height: 3 }],
+                vec![Tree { height: 2 }, Tree { height: 5 }, Tree { height: 5 }, Tree { height: 1 }, Tree { height: 2 }],
+                vec![Tree { height: 6 }, Tree { height: 5 }, Tree { height: 3 }, Tree { height: 3 }, Tree { height: 2 }],
+                vec![Tree { height: 3 }, Tree { height: 3 }, Tree { height: 5 }, Tree { height: 4 }, Tree { height: 9 }],
+                vec![Tree { height: 3 }, Tree { height: 5 }, Tree { height: 3 }, Tree { height: 9 }, Tree { height: 0 }],
             ]),
         );
 
@@ -357,7 +335,6 @@ mod tests {
         // Act
         let scenic_score_map = tree_map.calculate_scenic_score_map();
         let highest_scenic_score = scenic_score_map.find_highest_scenic_score();
-        println!("{scenic_score_map:?}");
 
         // Assert
         assert_eq!(scenic_score_map.0[1][2], ScenicScore(4));
