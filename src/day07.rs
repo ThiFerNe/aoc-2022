@@ -146,7 +146,7 @@ impl CommandHistory {
                             .split(' ')
                             .collect::<Vec<_>>()
                             .try_into()
-                            .map_err(|vec: Vec<_>| anyhow::anyhow!("Could not split line #{line_index} of executed command #{executed_index} into two parts.")))
+                            .map_err(|vec: Vec<_>| anyhow::anyhow!("Could not split line #{line_index} of executed command #{executed_index} into two parts (splitted into {} parts).", vec.len())))
                         .collect::<Result<Vec<[&str; 2]>, _>>()?
                         .into_iter()
                         .enumerate()
@@ -309,6 +309,7 @@ impl FilesystemElement {
         }
     }
 
+    #[allow(dead_code)]
     fn is_file(&self) -> bool {
         match self {
             FilesystemElement::Directory { .. } => false,
