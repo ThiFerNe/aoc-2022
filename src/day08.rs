@@ -1,17 +1,28 @@
-use anyhow::Context;
-use itertools::Itertools;
+use std::cmp::Ordering;
 use std::fmt::Display;
 use std::ops::Range;
 use std::str::FromStr;
 
+use anyhow::Context;
+
+use itertools::Itertools;
+
 const INPUT: &str = include_str!("../inputs/day08.input");
 
 fn main() -> anyhow::Result<()> {
+    let tree_map = TreeMap::from_str(INPUT)?;
+
     // PART 1 - 46 minutes 27 seconds
-    let part_1_solution = TreeMap::from_str(INPUT)?
-        .calculate_visibility_map()
-        .count_visibles();
+    let part_1_solution = tree_map.calculate_visibility_map().count_visibles();
     println!("part_1_solution: {part_1_solution}");
+
+    // PART 2 - 29 minutes 48 seconds
+    let part_2_solution = tree_map
+        .calculate_scenic_score_map()
+        .find_highest_scenic_score()
+        .copied()
+        .ok_or_else(|| anyhow::anyhow!("No trees were in given area."))?;
+    println!("part_2_solution: {part_2_solution}");
 
     Ok(())
 }
@@ -73,6 +84,66 @@ impl TreeMap {
                                     )
                                 })
                         })
+                        .collect()
+                })
+                .collect(),
+        )
+    }
+
+    fn calculate_scenic_score_map(&self) -> ScenicScoreMap {
+        let check_line = |column_index: usize, line_index: usize, to_column_index: usize| -> u64 {
+            let increment = match column_index.cmp(&to_column_index) {
+                Ordering::Less => 1,
+                Ordering::Equal => return 0,
+                Ordering::Greater => -1,
+            };
+            let mut current_column_index = column_index as isize + increment;
+            while current_column_index != to_column_index as isize {
+                if self.0[line_index][current_column_index as usize].height
+                    >= self.0[line_index][column_index].height
+                {
+                    return (current_column_index - column_index as isize).abs() as u64;
+                }
+                current_column_index += increment;
+            }
+            return (to_column_index as isize - column_index as isize).abs() as u64;
+        };
+        let check_column = |column_index: usize, line_index: usize, to_line_index: usize| -> u64 {
+            let increment = match line_index.cmp(&to_line_index) {
+                Ordering::Less => 1,
+                Ordering::Equal => return 0,
+                Ordering::Greater => -1,
+            };
+            let mut current_line_index = line_index as isize + increment;
+            while current_line_index != to_line_index as isize {
+                if self.0[current_line_index as usize][column_index].height
+                    >= self.0[line_index][column_index].height
+                {
+                    return (current_line_index - line_index as isize).abs() as u64;
+                }
+                current_line_index += increment;
+            }
+            return (to_line_index as isize - line_index as isize).abs() as u64;
+        };
+        ScenicScoreMap(
+            self.0
+                .iter()
+                .enumerate()
+                .map(|(line_index, tree_line)| {
+                    tree_line
+                        .iter()
+                        .enumerate()
+                        .map(|(column_index, _)| {
+                            check_column(column_index, line_index, 0)
+                                * check_column(
+                                    column_index,
+                                    line_index,
+                                    self.0[line_index].len() - 1,
+                                )
+                                * check_line(column_index, line_index, 0)
+                                * check_line(column_index, line_index, self.0.len() - 1)
+                        })
+                        .map(ScenicScore)
                         .collect()
                 })
                 .collect(),
@@ -176,6 +247,24 @@ impl Visibility {
     }
 }
 
+#[derive(Debug, Eq, PartialEq, Clone)]
+struct ScenicScoreMap(Vec<Vec<ScenicScore>>);
+
+impl ScenicScoreMap {
+    fn find_highest_scenic_score(&self) -> Option<&ScenicScore> {
+        self.0.iter().flat_map(|line| line.iter().max()).max()
+    }
+}
+
+#[derive(Debug, Eq, PartialEq, Copy, Clone, Ord, PartialOrd)]
+struct ScenicScore(u64);
+
+impl Display for ScenicScore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -256,6 +345,24 @@ mod tests {
                 vec![   Visible,   Visible,   Visible,   Visible,   Visible],
             ])
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_part_2_default() -> anyhow::Result<()> {
+        // Arrange
+        let tree_map = TreeMap::from_str(TEST_INPUT)?;
+
+        // Act
+        let scenic_score_map = tree_map.calculate_scenic_score_map();
+        let highest_scenic_score = scenic_score_map.find_highest_scenic_score();
+        println!("{scenic_score_map:?}");
+
+        // Assert
+        assert_eq!(scenic_score_map.0[1][2], ScenicScore(4));
+        assert_eq!(scenic_score_map.0[3][2], ScenicScore(8));
+        assert_eq!(highest_scenic_score, Some(&ScenicScore(8)));
 
         Ok(())
     }
