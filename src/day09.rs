@@ -135,44 +135,24 @@ fn move_b_one_closer_to_a(
     let vector = position_b.vector_to(position_a).with_context(|| {
         anyhow::anyhow!("while calculating vector from {position_b:?} to {position_a:?}")
     })?;
+    fn checked_add(a: i64, b: i64, element_str: &str) -> anyhow::Result<i64> {
+        a.checked_add(b)
+            .ok_or_else(|| anyhow::anyhow!("Could not add {a} to {b} for {element_str}."))
+    }
     if vector.x == 0 && vector.y.abs() > 1 {
         Ok(Position2D {
             x: position_b.x,
-            y: position_b.y.checked_add(vector.y.signum()).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Could not add {} to {} to Y.",
-                    vector.y.signum(),
-                    position_b.y
-                )
-            })?,
+            y: checked_add(position_b.y, vector.y.signum(), "Y")?,
         })
     } else if vector.x.abs() > 1 && vector.y == 0 {
         Ok(Position2D {
-            x: position_b.x.checked_add(vector.x.signum()).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Could not add {} to {} to X.",
-                    vector.x.signum(),
-                    position_b.x
-                )
-            })?,
+            x: checked_add(position_b.x, vector.x.signum(), "X")?,
             y: position_b.y,
         })
     } else if vector.x.abs() > 1 || vector.y.abs() > 1 {
         Ok(Position2D {
-            x: position_b.x.checked_add(vector.x.signum()).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Could not add {} to {} to X.",
-                    vector.x.signum(),
-                    position_b.x
-                )
-            })?,
-            y: position_b.y.checked_add(vector.y.signum()).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Could not add {} to {} to Y.",
-                    vector.y.signum(),
-                    position_b.y
-                )
-            })?,
+            x: checked_add(position_b.x, vector.x.signum(), "X")?,
+            y: checked_add(position_b.y, vector.y.signum(), "Y")?,
         })
     } else {
         Ok(*position_b)
