@@ -132,13 +132,14 @@ fn move_b_one_closer_to_a(
     position_a: &Position2D,
     position_b: &Position2D,
 ) -> anyhow::Result<Position2D> {
-    let vector = position_b.vector_to(position_a).with_context(|| {
-        anyhow::anyhow!("while calculating vector from {position_b:?} to {position_a:?}")
-    })?;
     fn checked_add(a: i64, b: i64, element_str: &str) -> anyhow::Result<i64> {
         a.checked_add(b)
             .ok_or_else(|| anyhow::anyhow!("Could not add {a} to {b} for {element_str}."))
     }
+
+    let vector = position_b.vector_to(position_a).with_context(|| {
+        anyhow::anyhow!("while calculating vector from {position_b:?} to {position_a:?}")
+    })?;
     if vector.x == 0 && vector.y.abs() > 1 {
         Ok(Position2D {
             x: position_b.x,
