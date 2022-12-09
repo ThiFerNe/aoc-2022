@@ -22,7 +22,7 @@ then
 	exit 1
 fi
 
-if ! cargo clippy --all-targets -- -D warnings -D clippy::pedantic -D clippy::style -D clippy::restriction -A clippy::print_stdout -A clippy::missing_docs_in_private_items -A clippy::std_instead_of_core -A clippy::implicit_return
+if ! cargo clippy --all-targets -- -D warnings -D clippy::pedantic -D clippy::style -D clippy::restriction -A clippy::print_stdout -A clippy::missing_docs_in_private_items -A clippy::std_instead_of_core -A clippy::std_instead_of_alloc -A clippy::implicit_return
 then
        echo "There are some clippy issues."
        exit 1
