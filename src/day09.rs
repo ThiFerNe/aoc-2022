@@ -7,16 +7,26 @@ use itertools::Itertools;
 const INPUT: &str = include_str!("../inputs/day09.input");
 
 fn main() -> anyhow::Result<()> {
-    // PART 1 - 1 hour 21 minutes 33 seconds
     let motion_series = MotionSeries::from_str(INPUT)?;
-    let rope_states = RopeState::default().apply_motion_series_return_with_you(&motion_series);
-    let part_1_solution = count_unique_visited_tail_positions(&rope_states);
+
+    // PART 1 - 1 hour 21 minutes 33 seconds
+    let rope_states_1 =
+        RopeState::<0>::default().apply_motion_series_return_with_you(&motion_series);
+    let part_1_solution = count_unique_visited_tail_positions(&rope_states_1);
     println!("part_1_solution: {part_1_solution}");
+
+    // PART 2 - 17 minutes 54 seconds
+    let rope_states_2 =
+        RopeState::<8>::default().apply_motion_series_return_with_you(&motion_series);
+    let part_2_solution = count_unique_visited_tail_positions(&rope_states_2);
+    println!("part_2_solution: {part_2_solution}");
 
     Ok(())
 }
 
-fn count_unique_visited_tail_positions(rope_states: &[RopeState]) -> usize {
+fn count_unique_visited_tail_positions<const ADDITIONAL: usize>(
+    rope_states: &[RopeState<ADDITIONAL>],
+) -> usize {
     rope_states
         .iter()
         .map(|rope_state| rope_state.tail_position)
@@ -25,52 +35,45 @@ fn count_unique_visited_tail_positions(rope_states: &[RopeState]) -> usize {
 }
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
-struct RopeState {
+struct RopeState<const ADDITIONAL_KNOTS: usize = 0> {
     head_position: Position2D,
+    between_positions: [Position2D; ADDITIONAL_KNOTS],
     tail_position: Position2D,
 }
 
-impl RopeState {
+impl<const ADDITIONAL_KNOTS: usize> RopeState<ADDITIONAL_KNOTS> {
     fn apply_motion(&self, motion: &Motion) -> Vec<Self> {
         let mut output = Vec::with_capacity(usize::try_from(motion.steps()).unwrap());
         let mut current = *self;
         for _ in 0..motion.steps() {
             let new_head_position = motion.apply_one(&current.head_position);
-            let new_tail_position =
-                Self::move_tail_one_closer_to_head(&new_head_position, &current.tail_position);
+            let mut new_between_positions = current.between_positions;
+            for index in 0..current.between_positions.len() {
+                let prior_knot = if index == 0 {
+                    &new_head_position
+                } else {
+                    &new_between_positions[index - 1]
+                };
+                new_between_positions[index] =
+                    move_b_one_closer_to_a(prior_knot, &current.between_positions[index]);
+            }
+            let new_tail_position = if new_between_positions.is_empty() {
+                move_b_one_closer_to_a(&new_head_position, &current.tail_position)
+            } else {
+                move_b_one_closer_to_a(
+                    new_between_positions.last().unwrap(),
+                    &current.tail_position,
+                )
+            };
             let new = Self {
                 head_position: new_head_position,
+                between_positions: new_between_positions,
                 tail_position: new_tail_position,
             };
             output.push(new);
             current = new;
         }
         output
-    }
-
-    fn move_tail_one_closer_to_head(
-        head_position: &Position2D,
-        tail_position: &Position2D,
-    ) -> Position2D {
-        let vector = tail_position.vector_to(head_position);
-        if vector.x == 0 && vector.y.abs() > 1 {
-            Position2D {
-                x: tail_position.x,
-                y: tail_position.y + vector.y.signum(),
-            }
-        } else if vector.x.abs() > 1 && vector.y == 0 {
-            Position2D {
-                x: tail_position.x + vector.x.signum(),
-                y: tail_position.y,
-            }
-        } else if vector.x.abs() > 1 || vector.y.abs() > 1 {
-            Position2D {
-                x: tail_position.x + vector.x.signum(),
-                y: tail_position.y + vector.y.signum(),
-            }
-        } else {
-            *tail_position
-        }
     }
 
     fn apply_motion_series_return_with_you(&self, motion_series: &MotionSeries) -> Vec<Self> {
@@ -86,10 +89,33 @@ impl RopeState {
     }
 }
 
-impl Default for RopeState {
+fn move_b_one_closer_to_a(position_a: &Position2D, position_b: &Position2D) -> Position2D {
+    let vector = position_b.vector_to(position_a);
+    if vector.x == 0 && vector.y.abs() > 1 {
+        Position2D {
+            x: position_b.x,
+            y: position_b.y + vector.y.signum(),
+        }
+    } else if vector.x.abs() > 1 && vector.y == 0 {
+        Position2D {
+            x: position_b.x + vector.x.signum(),
+            y: position_b.y,
+        }
+    } else if vector.x.abs() > 1 || vector.y.abs() > 1 {
+        Position2D {
+            x: position_b.x + vector.x.signum(),
+            y: position_b.y + vector.y.signum(),
+        }
+    } else {
+        *position_b
+    }
+}
+
+impl<const ADDITIONAL: usize> Default for RopeState<ADDITIONAL> {
     fn default() -> Self {
         Self {
             head_position: Position2D::zero(),
+            between_positions: [Position2D::zero(); ADDITIONAL],
             tail_position: Position2D::zero(),
         }
     }
@@ -221,7 +247,8 @@ R 2";
     fn test_part_1_default() -> anyhow::Result<()> {
         // Act
         let motion_series = MotionSeries::from_str(TEST_INPUT)?;
-        let rope_states = RopeState::default().apply_motion_series_return_with_you(&motion_series);
+        let rope_states =
+            RopeState::<0>::default().apply_motion_series_return_with_you(&motion_series);
         let count_of_unique_visited_tail_positions =
             count_unique_visited_tail_positions(&rope_states);
 
@@ -261,6 +288,7 @@ R 2";
         // Arrange
         let initial_state = RopeState {
             head_position: Position2D { x: 0, y: 0 },
+            between_positions: [],
             tail_position: Position2D { x: 0, y: 0 },
         };
 
@@ -273,18 +301,22 @@ R 2";
             vec![
                 RopeState {
                     head_position: Position2D { x: 1, y: 0 },
+                    between_positions: [],
                     tail_position: Position2D { x: 0, y: 0 }
                 },
                 RopeState {
                     head_position: Position2D { x: 2, y: 0 },
+                    between_positions: [],
                     tail_position: Position2D { x: 1, y: 0 }
                 },
                 RopeState {
                     head_position: Position2D { x: 3, y: 0 },
+                    between_positions: [],
                     tail_position: Position2D { x: 2, y: 0 }
                 },
                 RopeState {
                     head_position: Position2D { x: 4, y: 0 },
+                    between_positions: [],
                     tail_position: Position2D { x: 3, y: 0 }
                 }
             ]
@@ -292,7 +324,7 @@ R 2";
     }
 
     #[test]
-    fn test_rope_state_move_tail_one_closer_to_head() {
+    fn test_rope_state_move_b_one_closer_to_a() {
         // Arrange
         #[rustfmt::skip]
         let tests = vec![
@@ -304,15 +336,15 @@ R 2";
             ((Position2D { x: 3, y: 2 }, Position2D { x: 1, y: 1 }), Position2D { x: 2, y: 2 }), // one diagonal
         ];
 
-        for ((head_pos, tail_pos), target_tail_pos) in tests {
+        for ((position_a, position_b), target_position_b) in tests {
             // Act
-            let new_tail_pos = RopeState::move_tail_one_closer_to_head(&head_pos, &tail_pos);
+            let new_b_position = move_b_one_closer_to_a(&position_a, &position_b);
 
             // Assert
             assert_eq!(
-                new_tail_pos, target_tail_pos,
-                "during head_pos={:?} and tail_pos={:?}",
-                head_pos, tail_pos
+                new_b_position, target_position_b,
+                "during position_a={:?} and position_b={:?}",
+                position_a, position_b
             );
         }
     }
