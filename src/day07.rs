@@ -38,16 +38,17 @@ impl CommandHistory {
                         "First executed command is no ChangeDirectory command, which is needed."
                     )
                 })?
-                .to_owned(),
+                .clone(),
             None => return Ok(None),
         };
 
         let filesystem = Filesystem::new(FilesystemElement::new_directory(starting_directory_name));
 
-        let mut current_filesystem_element: Rc<RefCell<FilesystemElement>> = filesystem.0.clone();
+        let mut current_filesystem_element: Rc<RefCell<FilesystemElement>> =
+            Rc::clone(&filesystem.0);
         for (executed_index, executed_command) in self.0.iter().enumerate().skip(1) {
-            match &executed_command.command {
-                Command::ChangeDirectory { target } => {
+            match executed_command.command {
+                Command::ChangeDirectory { ref target } => {
                     if target == ".." {
                         let parent = RefCell::borrow(&current_filesystem_element)
                             .parent()
@@ -66,7 +67,7 @@ impl CommandHistory {
                         current_filesystem_element = parent;
                     } else {
                         let child = RefCell::borrow(&current_filesystem_element)
-                            .get_child_by_name(&target)
+                            .get_child_by_name(target)
                             .with_context(|| {
                                 format!(
                                     "while trying to get child \"{target}\" from {:?}",
@@ -107,7 +108,7 @@ impl CommandHistory {
                     let parent_ref = Rc::downgrade(&current_filesystem_element);
                     current_filesystem_element
                         .borrow_mut()
-                        .add_children(children, parent_ref)?;
+                        .add_children(children, &parent_ref)?;
                 }
             }
         }
@@ -163,8 +164,8 @@ enum Command {
 
 impl Command {
     fn as_change_directory_target(&self) -> Option<&String> {
-        match self {
-            Command::ChangeDirectory { target } => Some(target),
+        match *self {
+            Command::ChangeDirectory { ref target } => Some(target),
             Command::ListDirectoryContents => None,
         }
     }
@@ -194,14 +195,14 @@ impl Filesystem {
     }
 
     fn all_filesystem_elements(&self) -> impl Iterator<Item = Rc<RefCell<FilesystemElement>>> {
-        [self.0.clone()]
+        [Rc::clone(&self.0)]
             .into_iter()
             .chain(RefCell::borrow(&self.0).tree_without_self())
     }
 
     fn all_directories(&self) -> impl Iterator<Item = Rc<RefCell<FilesystemElement>>> {
         self.all_filesystem_elements()
-            .filter(|element| RefCell::borrow(&element).is_directory())
+            .filter(|element| RefCell::borrow(element).is_directory())
     }
 
     fn calculate_sum_of_directories_sizes_where_each_size_max(
@@ -219,8 +220,13 @@ impl Filesystem {
         total_disk_space_available: usize,
         needed_unused_space: usize,
     ) -> anyhow::Result<usize> {
-        let amount_to_free =
-            RefCell::borrow(&self.0).size() - (total_disk_space_available - needed_unused_space);
+        let filesystem_usage = RefCell::borrow(&self.0).size();
+
+        let amount_to_free = filesystem_usage.checked_sub(
+            total_disk_space_available
+                .checked_sub(needed_unused_space)
+                .ok_or_else(|| anyhow::anyhow!("More unused space is needed ({needed_unused_space}) than total disk space is available ({total_disk_space_available})"))?
+        ).ok_or_else(|| anyhow::anyhow!("There needs to be more space freed than the filesystem currently uses ({filesystem_usage})."))?;
         self.find_directory_with_minimum_size_and_at_least_size_of(amount_to_free)
             .ok_or_else(|| anyhow::anyhow!("No directory found, because there might be none."))
             .map(|directory| RefCell::borrow(&directory).size())
@@ -235,8 +241,8 @@ impl Filesystem {
                 let directory_size = RefCell::borrow(&directory).size();
                 (directory, directory_size)
             })
-            .filter(|(_, directory_size)| *directory_size >= at_least_size)
-            .reduce(|a, b| b.1.lt(&a.1).then_some(b).unwrap_or(a))
+            .filter(|&(_, directory_size)| directory_size >= at_least_size)
+            .reduce(|a, b| if b.1 < a.1 { b } else { a })
             .map(|(directory, _)| directory)
     }
 }
@@ -280,16 +286,15 @@ impl FilesystemElement {
 
     fn name(&self) -> &str {
         match self {
-            FilesystemElement::Directory { name, .. } => name.as_str(),
-            FilesystemElement::File { name, .. } => name.as_str(),
+            &Self::Directory { ref name, .. } | &Self::File { ref name, .. } => name.as_str(),
         }
     }
 
     fn parent(&self) -> Option<anyhow::Result<Rc<RefCell<Self>>>> {
         match self {
-            Self::Directory { parent, .. } | Self::File { parent, .. } => {
-                parent.as_ref().map(|parent| {
-                    parent
+            &Self::Directory { ref parent, .. } | &Self::File { ref parent, .. } => {
+                parent.as_ref().map(|weak_parent_reference| {
+                    weak_parent_reference
                         .upgrade()
                         .ok_or_else(|| anyhow::anyhow!("Parent has been destroyed, it seems."))
                 })
@@ -298,68 +303,69 @@ impl FilesystemElement {
     }
 
     fn set_parent(&mut self, new_parent: Weak<RefCell<Self>>) {
-        match self {
-            FilesystemElement::Directory { parent, .. } => *parent = Some(new_parent),
-            FilesystemElement::File { parent, .. } => *parent = Some(new_parent),
+        match *self {
+            Self::Directory { ref mut parent, .. } | Self::File { ref mut parent, .. } => {
+                *parent = Some(new_parent)
+            }
         }
     }
 
     fn size(&self) -> usize {
-        match self {
-            FilesystemElement::Directory { children, .. } => children
+        match *self {
+            Self::Directory { ref children, .. } => children
                 .iter()
-                .map(|child| RefCell::borrow(&child).size())
+                .map(|child| RefCell::borrow(child).size())
                 .sum::<usize>(),
-            FilesystemElement::File { size, .. } => *size,
+            Self::File { ref size, .. } => *size,
         }
     }
 
     fn is_directory(&self) -> bool {
-        match self {
-            FilesystemElement::Directory { .. } => true,
-            FilesystemElement::File { .. } => false,
+        match *self {
+            Self::Directory { .. } => true,
+            Self::File { .. } => false,
         }
     }
 
     #[allow(dead_code)]
     fn is_file(&self) -> bool {
-        match self {
-            FilesystemElement::Directory { .. } => false,
-            FilesystemElement::File { .. } => true,
+        match *self {
+            Self::Directory { .. } => false,
+            Self::File { .. } => true,
         }
     }
 
     fn tree_without_self(&self) -> impl Iterator<Item = Rc<RefCell<Self>>> {
-        match self {
-            FilesystemElement::Directory { children, .. } => children
+        match *self {
+            Self::Directory { ref children, .. } => children
                 .iter()
                 .cloned()
                 .flat_map(|child| {
-                    [child.clone()]
+                    [Rc::clone(&child)]
                         .into_iter()
                         .chain(RefCell::borrow(&child).tree_without_self())
                 })
                 .collect::<Vec<_>>()
                 .into_iter(),
-            FilesystemElement::File { .. } => Vec::new().into_iter(),
+            Self::File { .. } => Vec::new().into_iter(),
         }
     }
 
     fn add_children(
         &mut self,
         children: Vec<Self>,
-        parent_ref: Weak<RefCell<Self>>,
+        parent_ref: &Weak<RefCell<Self>>,
     ) -> anyhow::Result<()> {
-        match self {
+        match *self {
             Self::Directory {
-                children: self_children,
+                children: ref mut self_children,
                 ..
             } => {
                 self_children.extend(
                     children
                         .into_iter()
                         .map(|mut child| {
-                            child.set_parent(parent_ref.clone());
+                            child.set_parent(Weak::clone(parent_ref));
                             child
                         })
                         .map(RefCell::new)
@@ -375,10 +381,10 @@ impl FilesystemElement {
         &self,
         name: &str,
     ) -> anyhow::Result<Option<Rc<RefCell<FilesystemElement>>>> {
-        match self {
-            FilesystemElement::Directory { children, .. } => Ok(children
+        match *self {
+            FilesystemElement::Directory { ref children, .. } => Ok(children
                 .iter()
-                .find(|child| RefCell::borrow(&child).name() == name)
+                .find(|child| RefCell::borrow(child).name() == name)
                 .cloned()),
             FilesystemElement::File { .. } => {
                 Err(anyhow::anyhow!("A file does not have children."))
@@ -389,11 +395,15 @@ impl FilesystemElement {
 
 impl Display for FilesystemElement {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            FilesystemElement::Directory { name, children, .. } => {
+        match *self {
+            FilesystemElement::Directory {
+                ref name,
+                ref children,
+                ..
+            } => {
                 write!(f, "- {name} (dir)")?;
                 for child in children {
-                    let child_display = format!("{}", RefCell::borrow(&child))
+                    let child_display = format!("{}", RefCell::borrow(child))
                         .lines()
                         .map(|line| format!("\n  {line}"))
                         .collect::<String>();
@@ -401,11 +411,14 @@ impl Display for FilesystemElement {
                 }
                 Ok(())
             }
-            FilesystemElement::File { name, size, .. } => write!(f, "- {name} (file, size={size})"),
+            FilesystemElement::File {
+                ref name, ref size, ..
+            } => write!(f, "- {name} (file, size={size})"),
         }
     }
 }
 
+#[allow(clippy::panic_in_result_fn)]
 #[cfg(test)]
 mod tests {
     use super::*;
