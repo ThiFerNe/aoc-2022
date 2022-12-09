@@ -106,8 +106,7 @@ impl CommandHistory {
                         })
                         .collect::<Result<Vec<_>, _>>()?;
                     let parent_ref = Rc::downgrade(&current_filesystem_element);
-                    current_filesystem_element
-                        .borrow_mut()
+                    RefCell::borrow_mut(&current_filesystem_element)
                         .add_children(children, &parent_ref)?;
                 }
             }
@@ -305,7 +304,7 @@ impl FilesystemElement {
     fn set_parent(&mut self, new_parent: Weak<RefCell<Self>>) {
         match *self {
             Self::Directory { ref mut parent, .. } | Self::File { ref mut parent, .. } => {
-                *parent = Some(new_parent)
+                *parent = Some(new_parent);
             }
         }
     }
