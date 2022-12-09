@@ -2,8 +2,8 @@ use std::fmt::Display;
 use std::str::FromStr;
 
 use anyhow::Context;
-use itertools::FoldWhile::{Continue, Done};
 
+use itertools::FoldWhile::{Continue, Done};
 use itertools::Itertools;
 
 const INPUT: &str = include_str!("../inputs/day08.input");
@@ -87,9 +87,9 @@ impl TreeMap {
     }
 
     fn calculate_scenic_score(&self, column_index: usize, row_index: usize) -> ScenicScore {
-        fn calculate<'a, I>(mut iterator: I, tree: &'a Tree) -> u64
+        fn calculate<'trees, I>(mut iterator: I, tree: &'trees Tree) -> u64
         where
-            I: Iterator<Item = &'a Tree>,
+            I: Iterator<Item = &'trees Tree>,
         {
             iterator
                 .fold_while(0, |view_distance, other_tree| {
@@ -164,7 +164,7 @@ impl FromStr for TreeMap {
             })
             .collect::<Result<Vec<Vec<_>>, _>>()?;
 
-        let tree_map_line_lengths = tree_map.iter().map(|vec| vec.len());
+        let tree_map_line_lengths = tree_map.iter().map(Vec::len);
         if tree_map_line_lengths.clone().unique().count() == 1 {
             Ok(Self(tree_map))
         } else {
@@ -230,7 +230,7 @@ struct ScenicScoreMap(Vec<Vec<ScenicScore>>);
 
 impl ScenicScoreMap {
     fn find_highest_scenic_score(&self) -> Option<&ScenicScore> {
-        self.0.iter().flat_map(|row| row.iter().max()).max()
+        self.0.iter().filter_map(|row| row.iter().max()).max()
     }
 }
 
@@ -243,6 +243,8 @@ impl Display for ScenicScore {
     }
 }
 
+#[allow(clippy::panic_in_result_fn)]
+#[allow(clippy::indexing_slicing)]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -304,6 +306,8 @@ mod tests {
 
     #[test]
     fn test_tree_map_calculate_visibility_map() -> anyhow::Result<()> {
+        use Visibility::{Invisible, Visible};
+
         // Arrange
         let tree_map = TreeMap::from_str(TEST_INPUT)?;
 
@@ -311,7 +315,6 @@ mod tests {
         let visibility_map = tree_map.calculate_visibility_map();
 
         // Assert
-        use Visibility::{Invisible, Visible};
         #[rustfmt::skip]
         assert_eq!(
             visibility_map,
