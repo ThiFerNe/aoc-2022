@@ -10,14 +10,16 @@ fn main() -> anyhow::Result<()> {
     let motion_series = MotionSeries::from_str(INPUT)?;
 
     // PART 1 - 1 hour 21 minutes 33 seconds
-    let rope_states_1 =
-        RopeState::<0>::default().apply_motion_series_return_with_you(&motion_series);
+    let rope_states_1 = RopeState::<0>::default()
+        .apply_motion_series_return_with_you(&motion_series)
+        .context("while applying motion series to 2 knots rope.")?;
     let part_1_solution = count_unique_visited_tail_positions(&rope_states_1);
     println!("part_1_solution: {part_1_solution}");
 
     // PART 2 - 17 minutes 54 seconds
-    let rope_states_2 =
-        RopeState::<8>::default().apply_motion_series_return_with_you(&motion_series);
+    let rope_states_2 = RopeState::<8>::default()
+        .apply_motion_series_return_with_you(&motion_series)
+        .context("while applying motion series to 10 knots rope.")?;
     let part_2_solution = count_unique_visited_tail_positions(&rope_states_2);
     println!("part_2_solution: {part_2_solution}");
 
@@ -42,29 +44,49 @@ struct RopeState<const ADDITIONAL_KNOTS: usize = 0> {
 }
 
 impl<const ADDITIONAL_KNOTS: usize> RopeState<ADDITIONAL_KNOTS> {
-    fn apply_motion(&self, motion: &Motion) -> Vec<Self> {
-        let mut output = Vec::with_capacity(usize::try_from(motion.steps()).unwrap());
+    fn apply_motion(&self, motion: &Motion) -> anyhow::Result<Vec<Self>> {
+        let capacity = usize::try_from(motion.steps()).with_context(|| {
+            format!(
+                "while creating output vector, motion has too many steps ({})",
+                motion.steps()
+            )
+        })?;
+        let mut output = Vec::with_capacity(capacity);
+
         let mut current = *self;
         for _ in 0..motion.steps() {
-            let new_head_position = motion.apply_one(&current.head_position);
+            let new_head_position =
+                motion.apply_one(&current.head_position).with_context(|| {
+                    format!(
+                        "while applying one {motion:?} to {:?}",
+                        current.head_position
+                    )
+                })?;
 
-            let mut new_between_positions = current.between_positions;
-            for index in 0..current.between_positions.len() {
-                let prior_knot = if index == 0 {
-                    &new_head_position
-                } else {
-                    &new_between_positions[index - 1]
-                };
-                new_between_positions[index] =
-                    move_b_one_closer_to_a(prior_knot, &current.between_positions[index]);
+            let mut new_between_positions: [Position2D; ADDITIONAL_KNOTS] =
+                current.between_positions;
+            for (index, current_position) in current.between_positions.iter().enumerate() {
+                let prior_position: Position2D = *index
+                    .checked_sub(1)
+                    .and_then(|prior_index| new_between_positions.get(prior_index))
+                    .unwrap_or(&new_head_position);
+                let new_between_position: &mut Position2D = new_between_positions
+                    .get_mut(index)
+                    .ok_or_else(|| anyhow::anyhow!("Could not index into array with length {ADDITIONAL_KNOTS} with index {index}."))?;
+                *new_between_position = move_b_one_closer_to_a(&prior_position, current_position)
+                    .with_context(|| {
+                    format!("while moving {prior_position:?} closer to {current_position:?}")
+                })?;
             }
 
-            let prior_knot = if new_between_positions.is_empty() {
-                &new_head_position
-            } else {
-                new_between_positions.last().unwrap()
-            };
-            let new_tail_position = move_b_one_closer_to_a(prior_knot, &current.tail_position);
+            let prior_position = new_between_positions.last().unwrap_or(&new_head_position);
+            let new_tail_position = move_b_one_closer_to_a(prior_position, &current.tail_position)
+                .with_context(|| {
+                    format!(
+                        "while moving prior {prior_position:?} closer to tail {:?}",
+                        current.tail_position
+                    )
+                })?;
 
             let new_rope_state = Self {
                 head_position: new_head_position,
@@ -75,41 +97,85 @@ impl<const ADDITIONAL_KNOTS: usize> RopeState<ADDITIONAL_KNOTS> {
             output.push(new_rope_state);
             current = new_rope_state;
         }
-        output
+        Ok(output)
     }
 
-    fn apply_motion_series_return_with_you(&self, motion_series: &MotionSeries) -> Vec<Self> {
-        let mut output = Vec::with_capacity(motion_series.0.len() + 1);
+    fn apply_motion_series_return_with_you(
+        &self,
+        motion_series: &MotionSeries,
+    ) -> anyhow::Result<Vec<Self>> {
+        let capacity = motion_series.0.len().checked_add(1).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Could not create output vector, there are too many motions (1 + {})",
+                motion_series.0.len()
+            )
+        })?;
+        let mut output = Vec::with_capacity(capacity);
+
         output.push(*self);
+
         let mut current = *self;
         for motion in &motion_series.0 {
-            let rope_states = current.apply_motion(motion);
+            let rope_states = current
+                .apply_motion(motion)
+                .with_context(|| format!("while applying {motion:?} to {current:?}"))?;
             output.extend_from_slice(&rope_states);
-            current = *rope_states.last().unwrap();
+            current = *rope_states
+                .last()
+                .ok_or_else(|| anyhow::anyhow!("Returned rope states after {motion:?} has been applied to {current:?} are empty."))?;
         }
-        output
+        Ok(output)
     }
 }
 
-fn move_b_one_closer_to_a(position_a: &Position2D, position_b: &Position2D) -> Position2D {
-    let vector = position_b.vector_to(position_a);
+fn move_b_one_closer_to_a(
+    position_a: &Position2D,
+    position_b: &Position2D,
+) -> anyhow::Result<Position2D> {
+    let vector = position_b.vector_to(position_a).with_context(|| {
+        anyhow::anyhow!("while calculating vector from {position_b:?} to {position_a:?}")
+    })?;
     if vector.x == 0 && vector.y.abs() > 1 {
-        Position2D {
+        Ok(Position2D {
             x: position_b.x,
-            y: position_b.y + vector.y.signum(),
-        }
+            y: position_b.y.checked_add(vector.y.signum()).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Could not add {} to {} to Y.",
+                    vector.y.signum(),
+                    position_b.y
+                )
+            })?,
+        })
     } else if vector.x.abs() > 1 && vector.y == 0 {
-        Position2D {
-            x: position_b.x + vector.x.signum(),
+        Ok(Position2D {
+            x: position_b.x.checked_add(vector.x.signum()).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Could not add {} to {} to X.",
+                    vector.x.signum(),
+                    position_b.x
+                )
+            })?,
             y: position_b.y,
-        }
+        })
     } else if vector.x.abs() > 1 || vector.y.abs() > 1 {
-        Position2D {
-            x: position_b.x + vector.x.signum(),
-            y: position_b.y + vector.y.signum(),
-        }
+        Ok(Position2D {
+            x: position_b.x.checked_add(vector.x.signum()).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Could not add {} to {} to X.",
+                    vector.x.signum(),
+                    position_b.x
+                )
+            })?,
+            y: position_b.y.checked_add(vector.y.signum()).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Could not add {} to {} to Y.",
+                    vector.y.signum(),
+                    position_b.y
+                )
+            })?,
+        })
     } else {
-        *position_b
+        Ok(*position_b)
     }
 }
 
@@ -134,11 +200,17 @@ impl Position2D {
         Self { x: 0, y: 0 }
     }
 
-    fn vector_to(&self, other: &Self) -> Vector2D {
-        Vector2D {
-            x: other.x - self.x,
-            y: other.y - self.y,
-        }
+    fn vector_to(&self, other: &Self) -> anyhow::Result<Vector2D> {
+        Ok(Vector2D {
+            x: other
+                .x
+                .checked_sub(self.x)
+                .ok_or_else(|| anyhow::anyhow!("X distance of this to other is too big."))?,
+            y: other
+                .y
+                .checked_sub(self.y)
+                .ok_or_else(|| anyhow::anyhow!("Y distance of this to other is too big."))?,
+        })
     }
 }
 
@@ -177,32 +249,35 @@ enum Motion {
 
 impl Motion {
     fn steps(&self) -> u64 {
-        match self {
-            Motion::Right(steps) => *steps,
-            Motion::Left(steps) => *steps,
-            Motion::Up(steps) => *steps,
-            Motion::Down(steps) => *steps,
+        match *self {
+            Motion::Right(steps)
+            | Motion::Left(steps)
+            | Motion::Up(steps)
+            | Motion::Down(steps) => steps,
         }
     }
 
-    fn apply_one(&self, position: &Position2D) -> Position2D {
-        match self {
-            Motion::Right(_) => Position2D {
-                x: position.x + 1,
+    fn apply_one(&self, position: &Position2D) -> anyhow::Result<Position2D> {
+        let error = || {
+            anyhow::anyhow!("Cannot apply motion to this position, because afterwards it would be out of bounds.")
+        };
+        match *self {
+            Motion::Right(_) => Ok(Position2D {
+                x: position.x.checked_add(1).ok_or_else(error)?,
                 y: position.y,
-            },
-            Motion::Left(_) => Position2D {
-                x: position.x - 1,
+            }),
+            Motion::Left(_) => Ok(Position2D {
+                x: position.x.checked_sub(1).ok_or_else(error)?,
                 y: position.y,
-            },
-            Motion::Up(_) => Position2D {
+            }),
+            Motion::Up(_) => Ok(Position2D {
                 x: position.x,
-                y: position.y + 1,
-            },
-            Motion::Down(_) => Position2D {
+                y: position.y.checked_add(1).ok_or_else(error)?,
+            }),
+            Motion::Down(_) => Ok(Position2D {
                 x: position.x,
-                y: position.y - 1,
-            },
+                y: position.y.checked_sub(1).ok_or_else(error)?,
+            }),
         }
     }
 }
@@ -212,7 +287,7 @@ impl FromStr for Motion {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let parts: [&str; 2] =
-            s.split(" ")
+            s.split(' ')
                 .collect::<Vec<_>>()
                 .try_into()
                 .map_err(|vec: Vec<_>| {
@@ -249,8 +324,9 @@ R 2";
     fn test_part_1_default() -> anyhow::Result<()> {
         // Act
         let motion_series = MotionSeries::from_str(TEST_INPUT)?;
-        let rope_states =
-            RopeState::<0>::default().apply_motion_series_return_with_you(&motion_series);
+        let rope_states = RopeState::<0>::default()
+            .apply_motion_series_return_with_you(&motion_series)
+            .context("while applying motion series to two knot rope")?;
         let count_of_unique_visited_tail_positions =
             count_unique_visited_tail_positions(&rope_states);
 
@@ -262,7 +338,7 @@ R 2";
 
     #[test]
     fn test_motion_series_from_str() -> anyhow::Result<()> {
-        use Motion::*;
+        use Motion::{Down, Left, Right, Up};
 
         // Act
         let motion_series = MotionSeries::from_str(TEST_INPUT)?;
@@ -286,7 +362,7 @@ R 2";
     }
 
     #[test]
-    fn test_rope_state_apply_motion() {
+    fn test_rope_state_apply_motion() -> anyhow::Result<()> {
         // Arrange
         let initial_state = RopeState {
             head_position: Position2D { x: 0, y: 0 },
@@ -295,7 +371,9 @@ R 2";
         };
 
         // Act
-        let rope_states_1 = initial_state.apply_motion(&Motion::Right(4));
+        let rope_states_1 = initial_state
+            .apply_motion(&Motion::Right(4))
+            .context("while applying 4 Right motions")?;
 
         // Assert
         assert_eq!(
@@ -323,10 +401,12 @@ R 2";
                 }
             ]
         );
+
+        Ok(())
     }
 
     #[test]
-    fn test_rope_state_move_b_one_closer_to_a() {
+    fn test_rope_state_move_b_one_closer_to_a() -> anyhow::Result<()> {
         // Arrange
         #[rustfmt::skip]
         let tests = vec![
@@ -340,7 +420,10 @@ R 2";
 
         for ((position_a, position_b), target_position_b) in tests {
             // Act
-            let new_b_position = move_b_one_closer_to_a(&position_a, &position_b);
+            let new_b_position =
+                move_b_one_closer_to_a(&position_a, &position_b).with_context(|| {
+                    format!("while moving {position_b:?} one closer to {position_a:?}")
+                })?;
 
             // Assert
             assert_eq!(
@@ -349,5 +432,7 @@ R 2";
                 position_a, position_b
             );
         }
+
+        Ok(())
     }
 }
