@@ -47,6 +47,7 @@ impl<const ADDITIONAL_KNOTS: usize> RopeState<ADDITIONAL_KNOTS> {
         let mut current = *self;
         for _ in 0..motion.steps() {
             let new_head_position = motion.apply_one(&current.head_position);
+
             let mut new_between_positions = current.between_positions;
             for index in 0..current.between_positions.len() {
                 let prior_knot = if index == 0 {
@@ -57,21 +58,22 @@ impl<const ADDITIONAL_KNOTS: usize> RopeState<ADDITIONAL_KNOTS> {
                 new_between_positions[index] =
                     move_b_one_closer_to_a(prior_knot, &current.between_positions[index]);
             }
-            let new_tail_position = if new_between_positions.is_empty() {
-                move_b_one_closer_to_a(&new_head_position, &current.tail_position)
+
+            let prior_knot = if new_between_positions.is_empty() {
+                &new_head_position
             } else {
-                move_b_one_closer_to_a(
-                    new_between_positions.last().unwrap(),
-                    &current.tail_position,
-                )
+                new_between_positions.last().unwrap()
             };
-            let new = Self {
+            let new_tail_position = move_b_one_closer_to_a(prior_knot, &current.tail_position);
+
+            let new_rope_state = Self {
                 head_position: new_head_position,
                 between_positions: new_between_positions,
                 tail_position: new_tail_position,
             };
-            output.push(new);
-            current = new;
+
+            output.push(new_rope_state);
+            current = new_rope_state;
         }
         output
     }
