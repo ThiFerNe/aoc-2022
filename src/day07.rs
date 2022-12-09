@@ -256,12 +256,12 @@ impl Display for Filesystem {
 enum FilesystemElement {
     Directory {
         name: String,
-        parent: Option<Weak<RefCell<FilesystemElement>>>,
-        children: Vec<Rc<RefCell<FilesystemElement>>>,
+        parent: Option<Weak<RefCell<Self>>>,
+        children: Vec<Rc<RefCell<Self>>>,
     },
     File {
         name: String,
-        parent: Option<Weak<RefCell<FilesystemElement>>>,
+        parent: Option<Weak<RefCell<Self>>>,
         size: usize,
     },
 }
@@ -376,18 +376,13 @@ impl FilesystemElement {
         }
     }
 
-    fn get_child_by_name(
-        &self,
-        name: &str,
-    ) -> anyhow::Result<Option<Rc<RefCell<FilesystemElement>>>> {
+    fn get_child_by_name(&self, name: &str) -> anyhow::Result<Option<Rc<RefCell<Self>>>> {
         match *self {
-            FilesystemElement::Directory { ref children, .. } => Ok(children
+            Self::Directory { ref children, .. } => Ok(children
                 .iter()
                 .find(|child| RefCell::borrow(child).name() == name)
                 .cloned()),
-            FilesystemElement::File { .. } => {
-                Err(anyhow::anyhow!("A file does not have children."))
-            }
+            Self::File { .. } => Err(anyhow::anyhow!("A file does not have children.")),
         }
     }
 }
@@ -395,7 +390,7 @@ impl FilesystemElement {
 impl Display for FilesystemElement {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match *self {
-            FilesystemElement::Directory {
+            Self::Directory {
                 ref name,
                 ref children,
                 ..
@@ -410,7 +405,7 @@ impl Display for FilesystemElement {
                 }
                 Ok(())
             }
-            FilesystemElement::File {
+            Self::File {
                 ref name, ref size, ..
             } => write!(f, "- {name} (file, size={size})"),
         }
