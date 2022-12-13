@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::fmt::{Display, Formatter};
 use std::rc::Rc;
 use std::str::FromStr;
 
@@ -12,7 +13,7 @@ fn main() -> anyhow::Result<()> {
     let program = Program::from_str(INPUT)?;
 
     let mut cpu = CPU::new_with_register_x_value(1);
-    cpu.load(program);
+    cpu.load(program.clone());
 
     let signal_strength_sums = Rc::new(RefCell::new(0));
     let signal_strength_sums_clone = Rc::clone(&signal_strength_sums);
@@ -28,6 +29,22 @@ fn main() -> anyhow::Result<()> {
 
     let part_1_solution = *RefCell::borrow(&signal_strength_sums);
     println!("part_1_solution: {part_1_solution}");
+
+    // PART 2 - 4 minutes 4 seconds + 50 minutes 37 seconds = 54 minutes 41 seconds
+    let mut cpu = CPU::new_with_register_x_value(1);
+    cpu.load(program);
+
+    let mut crt = Rc::new(RefCell::new(CRT::<40, 6>::default()));
+    let mut crt_clone = Rc::clone(&crt);
+
+    let mut clock_circuit = ClockCircuit::new(cpu);
+    clock_circuit.set_during_cycle_callback(move |cpu, completed_cycles| {
+        RefCell::borrow_mut(&crt_clone).process_signal(cpu.x_register.value, completed_cycles);
+    });
+    clock_circuit.run()?;
+
+    let part_2_solution = RefCell::borrow(&crt).to_string();
+    println!("part_2_solution:\n{part_2_solution}");
 
     Ok(())
 }
@@ -202,6 +219,76 @@ impl ClockCircuit {
             if let Some(cycle_completed_callback) = &mut self.cycle_completed_callback {
                 (cycle_completed_callback)(&self.cpu, self.cycles_completed);
             }
+        }
+    }
+}
+
+#[derive(Debug, Eq, PartialEq, Clone)]
+struct CRT<const COLUMNS: usize = 40, const ROWS: usize = 6> {
+    buffer: [[Pixel; COLUMNS]; ROWS],
+}
+
+impl<const COLUMNS: usize, const ROWS: usize> CRT<COLUMNS, ROWS> {
+    fn process_signal(&mut self, signal: i64, during_cycle: u128) -> anyhow::Result<()> {
+        let during_cycle = during_cycle as usize;
+        let row = (during_cycle - 1) / COLUMNS;
+        if row >= ROWS {
+            Err(anyhow::anyhow!(
+                "Received signal outside of row range ({ROWS})."
+            ))
+        } else {
+            let column = isize::try_from((during_cycle - 1) % COLUMNS).unwrap();
+            if column + 1 < 0 || column - 1 >= isize::try_from(COLUMNS).unwrap() {
+                Err(anyhow::anyhow!(
+                    "Received signal outside of column range ({COLUMNS})."
+                ))
+            } else {
+                if column == signal as isize + 1 {
+                    self.buffer[row][column as usize] = Pixel::Lit;
+                } else if column == signal as isize {
+                    self.buffer[row][column as usize] = Pixel::Lit;
+                } else if column == signal as isize - 1 {
+                    self.buffer[row][column as usize] = Pixel::Lit;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+impl<const COLUMNS: usize, const ROWS: usize> Display for CRT<COLUMNS, ROWS> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (line, row) in self.buffer.iter().enumerate() {
+            if line > 0 {
+                writeln!(f)?;
+            }
+            for column in row {
+                write!(f, "{column}")?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl<const COLUMNS: usize, const ROWS: usize> Default for CRT<COLUMNS, ROWS> {
+    fn default() -> Self {
+        Self {
+            buffer: [[Pixel::Dark; COLUMNS]; ROWS],
+        }
+    }
+}
+
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+enum Pixel {
+    Lit,
+    Dark,
+}
+
+impl Display for Pixel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Pixel::Lit => write!(f, "#"),
+            Pixel::Dark => write!(f, "."),
         }
     }
 }
@@ -482,6 +569,37 @@ addx -5";
         clock_circuit.run()?;
         assert_eq!(clock_circuit.cycles_completed, 5);
         assert_eq!(*RefCell::borrow(&cycle_history), vec![1, 1, 4, 4, -1]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn part_2_default() -> anyhow::Result<()> {
+        let program = Program::from_str(TEST_INPUT)?;
+
+        let mut cpu = CPU::new_with_register_x_value(1);
+        cpu.load(program);
+
+        let mut crt = Rc::new(RefCell::new(CRT::<40, 6>::default()));
+        let mut crt_clone = Rc::clone(&crt);
+
+        let mut clock_circuit = ClockCircuit::new(cpu);
+        clock_circuit.set_during_cycle_callback(move |cpu, completed_cycles| {
+            RefCell::borrow_mut(&crt_clone).process_signal(cpu.x_register.value, completed_cycles);
+        });
+        clock_circuit.run()?;
+
+        let produced_image = RefCell::borrow(&crt).to_string();
+
+        assert_eq!(
+            produced_image,
+            "##..##..##..##..##..##..##..##..##..##..
+###...###...###...###...###...###...###.
+####....####....####....####....####....
+#####.....#####.....#####.....#####.....
+######......######......######......####
+#######.......#######.......#######....."
+        );
 
         Ok(())
     }
