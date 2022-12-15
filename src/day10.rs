@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
-use std::fmt::{Display, Formatter};
+use std::fmt::Display;
 use std::rc::Rc;
 use std::str::FromStr;
 
@@ -9,44 +9,114 @@ use anyhow::Context;
 const INPUT: &str = include_str!("../inputs/day10.input");
 
 fn main() -> anyhow::Result<()> {
-    // PART 1 - 1 hour 39 minutes 43 seconds
     let program = Program::from_str(INPUT)?;
+    let mut communication_device = CommunicationDevice::default();
+    communication_device.set_default_program(program);
 
-    let mut cpu = CPU::new_with_register_x_value(1);
-    cpu.load(program.clone());
-
-    let signal_strength_sums = Rc::new(RefCell::new(0));
-    let signal_strength_sums_clone = Rc::clone(&signal_strength_sums);
-    let mut clock_circuit = ClockCircuit::new(cpu);
-    clock_circuit.set_during_cycle_callback(move |cpu, completed_cycles| match completed_cycles {
-        20 | 60 | 100 | 140 | 180 | 220 => {
-            *RefCell::borrow_mut(&signal_strength_sums_clone) +=
-                i64::try_from(completed_cycles).unwrap() * cpu.x_register.value;
-        }
-        _ => (),
-    });
-    clock_circuit.run()?;
-
-    let part_1_solution = *RefCell::borrow(&signal_strength_sums);
+    // PART 1 - 1 hour 39 minutes 43 seconds
+    communication_device.reset();
+    let part_1_solution = communication_device
+        .calculate_sum_of_interesting_signal_strengths(1, vec![20, 60, 100, 140, 180, 220])
+        .context("while calculating sum of interesting signal strengths")?;
     println!("part_1_solution: {part_1_solution}");
 
     // PART 2 - 4 minutes 4 seconds + 50 minutes 37 seconds = 54 minutes 41 seconds
-    let mut cpu = CPU::new_with_register_x_value(1);
-    cpu.load(program);
-
-    let mut crt = Rc::new(RefCell::new(CRT::<40, 6>::default()));
-    let mut crt_clone = Rc::clone(&crt);
-
-    let mut clock_circuit = ClockCircuit::new(cpu);
-    clock_circuit.set_during_cycle_callback(move |cpu, completed_cycles| {
-        RefCell::borrow_mut(&crt_clone).process_signal(cpu.x_register.value, completed_cycles);
-    });
-    clock_circuit.run()?;
-
-    let part_2_solution = RefCell::borrow(&crt).to_string();
+    communication_device.reset();
+    let part_2_solution = communication_device
+        .calculate_crt_image(1)
+        .context("while calculating crt image")?;
     println!("part_2_solution:\n{part_2_solution}");
 
     Ok(())
+}
+
+struct CommunicationDevice<const CRT_COLUMNS: usize = 40, const CRT_ROWS: usize = 6> {
+    default_program: Option<Program>,
+    clock_circuit: ClockCircuit,
+    crt: Rc<RefCell<CRT<CRT_COLUMNS, CRT_ROWS>>>,
+}
+
+impl<const CRT_COLUMNS: usize, const CRT_ROWS: usize> CommunicationDevice<CRT_COLUMNS, CRT_ROWS> {
+    fn new() -> Self {
+        Self {
+            default_program: None,
+            clock_circuit: ClockCircuit::new(CPU::new_with_register_x_value(0)),
+            crt: Rc::new(RefCell::new(CRT::default())),
+        }
+    }
+
+    fn set_default_program(&mut self, program: Program) {
+        self.default_program = Some(program);
+    }
+
+    fn reset(&mut self) {
+        self.clock_circuit.reset();
+        RefCell::borrow_mut(&self.crt).reset();
+    }
+
+    fn calculate_sum_of_interesting_signal_strengths(
+        &mut self,
+        starting_cpu_x_register_value: i64,
+        look_during_cycles: Vec<u128>,
+    ) -> anyhow::Result<i64> {
+        self.reset();
+        if let Some(program) = &self.default_program {
+            self.clock_circuit.cpu.load(program.clone());
+        }
+        self.clock_circuit.cpu.x_register.value = starting_cpu_x_register_value;
+
+        let signal_strength_sums: Rc<RefCell<i64>> = Rc::new(RefCell::new(0));
+        let signal_strength_sums_clone = Rc::clone(&signal_strength_sums);
+        self.clock_circuit.set_during_cycle_callback(move |cpu, completed_cycles| {
+            if look_during_cycles.contains(&completed_cycles) {
+                let mut signal_strength_sums_clone_borrow = RefCell::borrow_mut(&signal_strength_sums_clone);
+                let signal_strength = i64::try_from(completed_cycles)
+                    .with_context(|| format!("while converting {completed_cycles} into i64"))?
+                    .checked_mul(cpu.x_register.value)
+                    .ok_or_else(|| anyhow::anyhow!("Cannot multiply completed_cycles={completed_cycles} with cpu.x_register.value={} .", cpu.x_register.value))?;
+                *signal_strength_sums_clone_borrow = signal_strength_sums_clone_borrow
+                    .checked_add(signal_strength)
+                    .ok_or_else(|| anyhow::anyhow!("Cannot add signal_strength={signal_strength} to signal_strength_sums."))?;
+            }
+            Ok(())
+        });
+        self.clock_circuit.run()?;
+
+        let result: i64 = *RefCell::borrow(&signal_strength_sums);
+        Ok(result)
+    }
+
+    fn calculate_crt_image(
+        &mut self,
+        starting_cpu_x_register_value: i64,
+    ) -> anyhow::Result<String> {
+        self.reset();
+        if let Some(program) = &self.default_program {
+            self.clock_circuit.cpu.load(program.clone());
+        }
+        self.clock_circuit.cpu.x_register.value = starting_cpu_x_register_value;
+
+        let crt_clone = Rc::clone(&self.crt);
+
+        self.clock_circuit
+            .set_during_cycle_callback(move |cpu, during_cycle| {
+                println!("#{during_cycle} = {cpu:?}");
+                RefCell::borrow_mut(&crt_clone)
+                    .process_signal(cpu.x_register.value, during_cycle)
+                    .with_context(|| {
+                        format!("while processing signal during cycle #{during_cycle}")
+                    })
+            });
+        self.clock_circuit.run()?;
+
+        Ok(RefCell::borrow(&self.crt).to_string())
+    }
+}
+
+impl Default for CommunicationDevice {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -95,6 +165,7 @@ impl FromStr for Instruction {
     }
 }
 
+#[derive(Debug)]
 struct CPU {
     x_register: Register,
     instruction_register: Option<(Instruction, u128)>,
@@ -110,6 +181,12 @@ impl CPU {
         }
     }
 
+    fn reset(&mut self) {
+        self.x_register.value = 0;
+        self.instruction_register = None;
+        self.loaded_instructions = None;
+    }
+
     fn load(&mut self, program: Program) {
         self.loaded_instructions = Some(program.instructions);
     }
@@ -119,6 +196,15 @@ impl CPU {
             Instruction::NoOp => 1,
             Instruction::AddX(_) => 2,
         }
+    }
+
+    fn has_instruction_left(&self) -> bool {
+        self.instruction_register.is_some()
+            || self
+                .loaded_instructions
+                .as_ref()
+                .map(|loaded_instructions| !loaded_instructions.is_empty())
+                .unwrap_or(false)
     }
 
     fn tick(&mut self) -> Result<(), CPUTickError> {
@@ -164,6 +250,7 @@ enum CPUTickError {
     Overflow,
 }
 
+#[derive(Debug)]
 struct Register {
     value: i64,
 }
@@ -177,8 +264,8 @@ impl Register {
 struct ClockCircuit {
     cycles_completed: u128,
     cpu: CPU,
-    cycle_completed_callback: Option<Box<dyn FnMut(&CPU, u128)>>,
-    during_cycle_callback: Option<Box<dyn FnMut(&CPU, u128)>>,
+    cycle_completed_callback: Option<Box<dyn FnMut(&CPU, u128) -> anyhow::Result<()>>>,
+    during_cycle_callback: Option<Box<dyn FnMut(&CPU, u128) -> anyhow::Result<()>>>,
 }
 
 impl ClockCircuit {
@@ -191,24 +278,33 @@ impl ClockCircuit {
         }
     }
 
+    fn reset(&mut self) {
+        self.cycles_completed = 0;
+        self.cpu.reset();
+    }
+
+    #[allow(dead_code)]
     fn set_cycle_completed_callback<F>(&mut self, cycle_completed_callback: F)
     where
-        F: FnMut(&CPU, u128) + 'static,
+        F: FnMut(&CPU, u128) -> anyhow::Result<()> + 'static,
     {
         self.cycle_completed_callback = Some(Box::new(cycle_completed_callback));
     }
 
     fn set_during_cycle_callback<F>(&mut self, during_cycle_callback: F)
     where
-        F: FnMut(&CPU, u128) + 'static,
+        F: FnMut(&CPU, u128) -> anyhow::Result<()> + 'static,
     {
         self.during_cycle_callback = Some(Box::new(during_cycle_callback));
     }
 
     fn run(&mut self) -> anyhow::Result<()> {
         loop {
-            if let Some(during_cycle_callback) = &mut self.during_cycle_callback {
-                (during_cycle_callback)(&self.cpu, self.cycles_completed + 1);
+            if self.cpu.has_instruction_left() {
+                if let Some(during_cycle_callback) = &mut self.during_cycle_callback {
+                    (during_cycle_callback)(&self.cpu, self.cycles_completed + 1)
+                        .context("while calling during_cycle_callback")?;
+                }
             }
             match self.cpu.tick() {
                 Ok(_) => (),
@@ -217,7 +313,8 @@ impl ClockCircuit {
             }
             self.cycles_completed += 1;
             if let Some(cycle_completed_callback) = &mut self.cycle_completed_callback {
-                (cycle_completed_callback)(&self.cpu, self.cycles_completed);
+                (cycle_completed_callback)(&self.cpu, self.cycles_completed)
+                    .context("while calling cycle_completed_callback")?;
             }
         }
     }
@@ -229,12 +326,20 @@ struct CRT<const COLUMNS: usize = 40, const ROWS: usize = 6> {
 }
 
 impl<const COLUMNS: usize, const ROWS: usize> CRT<COLUMNS, ROWS> {
+    fn reset(&mut self) {
+        self.buffer.iter_mut().for_each(|buffer_line| {
+            buffer_line
+                .iter_mut()
+                .for_each(|pixel| *pixel = Pixel::Dark)
+        });
+    }
+
     fn process_signal(&mut self, signal: i64, during_cycle: u128) -> anyhow::Result<()> {
         let during_cycle = during_cycle as usize;
         let row = (during_cycle - 1) / COLUMNS;
         if row >= ROWS {
             Err(anyhow::anyhow!(
-                "Received signal outside of row range ({ROWS})."
+                "Received signal outside of row range (is: {row}, max: {ROWS})."
             ))
         } else {
             let column = isize::try_from((during_cycle - 1) % COLUMNS).unwrap();
@@ -448,36 +553,17 @@ noop";
 
     #[test]
     fn test_part_1_default() -> anyhow::Result<()> {
+        // Arrange
         let program = Program::from_str(TEST_INPUT)?;
-        let mut cpu = CPU::new_with_register_x_value(1);
-        cpu.load(program);
-        let signal_strength_sums = Rc::new(RefCell::new(0));
-        let signal_strength_sums_clone = Rc::clone(&signal_strength_sums);
-        let mut clock_circuit = ClockCircuit::new(cpu);
-        clock_circuit.set_during_cycle_callback(move |cpu, completed_cycles| {
-            let error_message = format!(
-                "during cycle {completed_cycles}, remaining {} loaded instructions and currently {:?} in cpu",
-                cpu.loaded_instructions.as_ref().unwrap().len(),
-                cpu.instruction_register
-            );
-            match completed_cycles {
-                20 => assert_eq!(cpu.x_register.value, 21, "{error_message}"),
-                60 => assert_eq!(cpu.x_register.value, 19, "{error_message}"),
-                100 => assert_eq!(cpu.x_register.value, 18, "{error_message}"),
-                140 => assert_eq!(cpu.x_register.value, 21, "{error_message}"),
-                180 => assert_eq!(cpu.x_register.value, 16, "{error_message}"),
-                220 => assert_eq!(cpu.x_register.value, 18, "{error_message}"),
-                _ => (),
-            }
-            match completed_cycles {
-                20 | 60 | 100 | 140 | 180 | 220 => {
-                    *RefCell::borrow_mut(&signal_strength_sums_clone) += i64::try_from(completed_cycles).unwrap() * cpu.x_register.value;
-                },
-                _ => (),
-            }
-        });
-        clock_circuit.run()?;
-        assert_eq!(*RefCell::borrow(&signal_strength_sums), 13_140);
+        let mut communication_device = CommunicationDevice::default();
+        communication_device.set_default_program(program);
+
+        // Act
+        let signal_strength_sums = communication_device
+            .calculate_sum_of_interesting_signal_strengths(1, vec![20, 60, 100, 140, 180, 220])?;
+
+        // Assert
+        assert_eq!(signal_strength_sums, 13_140);
 
         Ok(())
     }
@@ -554,6 +640,7 @@ addx -5";
                 cycles_completed,
                 RefCell::borrow(&cycle_history_cloned).len() as u128
             );
+            Ok(())
         });
         assert_eq!(clock_circuit.cycles_completed, 0);
         assert_eq!(*RefCell::borrow(&cycle_history), vec![]);
@@ -575,22 +662,15 @@ addx -5";
 
     #[test]
     fn part_2_default() -> anyhow::Result<()> {
+        // Arrange
         let program = Program::from_str(TEST_INPUT)?;
+        let mut communication_device = CommunicationDevice::default();
+        communication_device.set_default_program(program);
 
-        let mut cpu = CPU::new_with_register_x_value(1);
-        cpu.load(program);
+        // Act
+        let produced_image = communication_device.calculate_crt_image(1)?;
 
-        let mut crt = Rc::new(RefCell::new(CRT::<40, 6>::default()));
-        let mut crt_clone = Rc::clone(&crt);
-
-        let mut clock_circuit = ClockCircuit::new(cpu);
-        clock_circuit.set_during_cycle_callback(move |cpu, completed_cycles| {
-            RefCell::borrow_mut(&crt_clone).process_signal(cpu.x_register.value, completed_cycles);
-        });
-        clock_circuit.run()?;
-
-        let produced_image = RefCell::borrow(&crt).to_string();
-
+        // Assert
         assert_eq!(
             produced_image,
             "##..##..##..##..##..##..##..##..##..##..
