@@ -65,7 +65,7 @@ mod tests {
             let output = calculate_last_index_of_first_non_repeating_char_sequence(test_input, 4);
 
             // Assert
-            assert_eq!(output, Some(test_target_output), "during {}", test_input);
+            assert_eq!(output, Some(test_target_output), "during {test_input}");
         }
     }
 
@@ -85,7 +85,7 @@ mod tests {
             let output = calculate_last_index_of_first_non_repeating_char_sequence(test_input, 14);
 
             // Assert
-            assert_eq!(output, Some(test_target_output), "during {}", test_input);
+            assert_eq!(output, Some(test_target_output), "during {test_input}");
         }
     }
 }
