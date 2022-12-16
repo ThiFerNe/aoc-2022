@@ -1,13 +1,22 @@
 use std::str::FromStr;
+use std::time::Instant;
 
 const INPUT: &str = include_str!("../inputs/day11.input");
 
 fn main() -> anyhow::Result<()> {
     // PART 1 - 1 hour 16 minutes 53 seconds
     let mut monkey_keep_away = MonkeyKeepAway::from_str(INPUT)?;
-    monkey_keep_away.run_for_rounds(20);
+    monkey_keep_away.run_for_rounds(20, WorryType::WithRelief);
     let level_of_monkey_business = monkey_keep_away.calculate_level_of_monkey_business();
     println!("level_of_monkey_business: {level_of_monkey_business}");
+
+    // PART 2 - 1 hour 56 minutes 4 seconds + 2 hours 24 minutes 26 seconds + 27 minutes 29 seconds = 4 hours 47 minutes 59 seconds
+    // third attempt with the help of https://github.com/schubart/AdventOfCode_2022_Rust/blob/c05c1f267566df54a94cf5364f6cbc5258756810/day11/src/lib.rs
+    let mut monkey_keep_away = MonkeyKeepAway::from_str(INPUT)?;
+    monkey_keep_away.run_for_rounds(10_000, WorryType::NoRelief);
+    let level_of_monkey_business = monkey_keep_away.calculate_level_of_monkey_business();
+    println!("level_of_monkey_business: {level_of_monkey_business}");
+
     Ok(())
 }
 
@@ -17,74 +26,56 @@ struct MonkeyKeepAway {
 }
 
 impl MonkeyKeepAway {
-    fn run(&mut self) {
-        let count_of_monkey = self.monkeys.len();
-        for current_monkey_index in 0..count_of_monkey {
-            let mut throw_queue = Vec::new();
-            let monkey_items = self.monkeys[current_monkey_index].take_items();
-            let current_monkey = &self.monkeys[current_monkey_index];
-            println!("Monkey {}:", current_monkey.index.0);
-            for mut item in monkey_items {
-                println!(
-                    " Monkey inspects an item with a worry level of {}.",
-                    item.worry_level
-                );
-                item.worry_level = current_monkey.operation.apply(item.worry_level);
-                match &current_monkey.operation {
-                    Operation::Product { factor } => println!(
-                        "  Worry level is multiplied by {factor} to {}.",
-                        item.worry_level
-                    ),
-                    Operation::ProductByFactorOld => println!(
-                        "  Worry level is multiplied by itself to {}.",
-                        item.worry_level
-                    ),
-                    Operation::Sum { summand } => println!(
-                        "  Worry level increases by {summand} to {}.",
-                        item.worry_level
-                    ),
-                }
-                item.worry_level = item.worry_level / 3;
-                println!(
-                    "  Monkey gets bored with item. Worry level is divided by 3 to {}.",
-                    item.worry_level
-                );
-                let predicament_result = current_monkey.test.predicament.check(item.worry_level);
-                match &current_monkey.test.predicament {
-                    Predicament::Divisible { by } => println!(
-                        "  Current worry level is{} divisible by {by}.",
-                        if predicament_result { "" } else { " not" }
-                    ),
-                }
-                let target = if predicament_result {
-                    current_monkey.test.on_true_target
+    fn run(&mut self, worry_type: WorryType) {
+        let least_common_test_divisor: u64 = self
+            .monkeys
+            .iter()
+            .map(|monkey| monkey.test.condition_divisible_by)
+            .product();
+        for current_monkey_index in 0..self.monkeys.len() {
+            let current_monkey = &mut self.monkeys[current_monkey_index];
+            let items: Vec<_> = current_monkey
+                .items
+                .drain(..)
+                .map(|item| Item {
+                    worry_level: current_monkey.operation.apply(item.worry_level),
+                })
+                .map(|item| {
+                    if matches!(worry_type, WorryType::WithRelief) {
+                        Item {
+                            worry_level: WorryLevel(item.worry_level.0 / 3),
+                        }
+                    } else {
+                        Item {
+                            worry_level: WorryLevel(item.worry_level.0 % least_common_test_divisor),
+                        }
+                    }
+                })
+                .collect();
+            current_monkey.count_of_item_inspections += u128::try_from(items.len()).unwrap();
+            let test = current_monkey.test;
+            for item in items {
+                let target = if item.worry_level.0 % test.condition_divisible_by == 0 {
+                    test.target_if_true.0
                 } else {
-                    current_monkey.test.on_false_target
+                    test.target_if_false.0
                 };
-                println!(
-                    "  Item with worry level {} is thrown to monkey {}.",
-                    item.worry_level, target.0
-                );
-                throw_queue.push((target, item));
-            }
-            self.monkeys[current_monkey_index].count_of_item_inspections +=
-                throw_queue.len() as u128;
-            for (monkey_index, item) in throw_queue {
-                self.monkeys[monkey_index.0 as usize].items.push(item);
+                self.monkeys[target].items.push(item);
             }
         }
-
-        // for each monkey
-        // - inspect item
-        // -- worry level operation
-        // -- monkey gets bored, divide by 3
-        // -- predicament check
-        // -- test execution
     }
 
-    fn run_for_rounds(&mut self, count_of_rounds: u128) {
-        for _ in 0..count_of_rounds {
-            self.run();
+    fn run_for_rounds(&mut self, count_of_rounds: u128, worry_type: WorryType) {
+        for round in 0..count_of_rounds {
+            let start = Instant::now();
+            println!(
+                "<{:?}> {round}/{count_of_rounds}={:.2}%",
+                start,
+                100. * round as f64 / count_of_rounds as f64
+            );
+            self.run(worry_type);
+            let end = Instant::now();
+            println!("<{:?}={:?}>", end, end - start);
         }
     }
 
@@ -135,7 +126,9 @@ impl FromStr for MonkeyKeepAway {
                         .map(|starting_item_worry_level_str| {
                             starting_item_worry_level_str
                                 .parse()
-                                .map(|worry_level| Item { worry_level })
+                                .map(|worry_level| Item {
+                                    worry_level: WorryLevel(worry_level),
+                                })
                         })
                         .collect::<Result<Vec<_>, _>>()?;
 
@@ -143,7 +136,11 @@ impl FromStr for MonkeyKeepAway {
                     let operation = Operation::from_str(operation_str).unwrap();
 
                     let test_predicament_str = monkey_lines[3].strip_prefix("  Test: ").unwrap();
-                    let test_predicament = Predicament::from_str(test_predicament_str).unwrap();
+                    let condition_divisible_by = test_predicament_str
+                        .strip_prefix("divisible by ")
+                        .unwrap()
+                        .parse()
+                        .unwrap();
 
                     let test_if_true = monkey_lines[4]
                         .strip_prefix("    If true: throw to monkey ")
@@ -161,9 +158,9 @@ impl FromStr for MonkeyKeepAway {
                         items,
                         operation,
                         test: Test {
-                            predicament: test_predicament,
-                            on_true_target: MonkeyIndex(test_if_true),
-                            on_false_target: MonkeyIndex(test_if_false),
+                            condition_divisible_by,
+                            target_if_true: MonkeyIndex(test_if_true),
+                            target_if_false: MonkeyIndex(test_if_false),
                         },
                         count_of_item_inspections: 0,
                     })
@@ -171,6 +168,12 @@ impl FromStr for MonkeyKeepAway {
                 .collect::<Result<Vec<_>, _>>()?,
         })
     }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+enum WorryType {
+    NoRelief,
+    WithRelief,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -182,21 +185,16 @@ struct Monkey {
     count_of_item_inspections: u128,
 }
 
-impl Monkey {
-    fn take_items(&mut self) -> Vec<Item> {
-        let mut monkey_items = Vec::new();
-        std::mem::swap(&mut monkey_items, &mut self.items);
-        monkey_items
-    }
-}
-
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-struct MonkeyIndex(u8);
+struct MonkeyIndex(usize);
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 struct Item {
-    worry_level: u64,
+    worry_level: WorryLevel,
 }
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+struct WorryLevel(u64);
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum Operation {
@@ -206,11 +204,11 @@ enum Operation {
 }
 
 impl Operation {
-    fn apply(&self, value: u64) -> u64 {
+    fn apply(&self, worry_level: WorryLevel) -> WorryLevel {
         match self {
-            Operation::Product { factor } => value * *factor,
-            Operation::ProductByFactorOld => value * value,
-            Operation::Sum { summand } => value + *summand,
+            Operation::Product { factor } => WorryLevel(worry_level.0 * *factor),
+            Operation::ProductByFactorOld => WorryLevel(worry_level.0 * worry_level.0),
+            Operation::Sum { summand } => WorryLevel(worry_level.0 + *summand),
         }
     }
 }
@@ -237,31 +235,9 @@ impl FromStr for Operation {
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 struct Test {
-    predicament: Predicament,
-    on_true_target: MonkeyIndex,
-    on_false_target: MonkeyIndex,
-}
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-enum Predicament {
-    Divisible { by: u64 },
-}
-
-impl Predicament {
-    fn check(&self, value: u64) -> bool {
-        match self {
-            Predicament::Divisible { by } => value % *by == 0,
-        }
-    }
-}
-
-impl FromStr for Predicament {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let by = s.strip_prefix("divisible by ").unwrap().parse().unwrap();
-        Ok(Self::Divisible { by })
-    }
+    condition_divisible_by: u64,
+    target_if_true: MonkeyIndex,
+    target_if_false: MonkeyIndex,
 }
 
 #[cfg(test)]
@@ -302,7 +278,7 @@ Monkey 3:
         let mut monkey_keep_away = MonkeyKeepAway::from_str(TEST_INPUT)?;
 
         // Act
-        monkey_keep_away.run_for_rounds(20);
+        monkey_keep_away.run_for_rounds(20, WorryType::WithRelief);
         let level_of_monkey_business = monkey_keep_away.calculate_level_of_monkey_business();
 
         // Assert
@@ -325,58 +301,58 @@ Monkey 3:
                     Monkey {
                         index: MonkeyIndex(0),
                         items: vec![
-                            Item { worry_level: 79 },
-                            Item { worry_level: 98 },
+                            Item { worry_level: WorryLevel(79) },
+                            Item { worry_level: WorryLevel(98) },
                         ],
                         operation: Operation::Product { factor: 19 },
                         test: Test {
-                            predicament: Predicament::Divisible { by: 23 },
-                            on_true_target: MonkeyIndex(2),
-                            on_false_target: MonkeyIndex(3)
+                            condition_divisible_by: 23,
+                            target_if_true: MonkeyIndex(2),
+                            target_if_false: MonkeyIndex(3)
                         },
                         count_of_item_inspections: 0,
                     },
                     Monkey {
                         index: MonkeyIndex(1),
                         items: vec![
-                            Item { worry_level: 54 },
-                            Item { worry_level: 65 },
-                            Item { worry_level: 75 },
-                            Item { worry_level: 74 },
+                            Item { worry_level: WorryLevel(54) },
+                            Item { worry_level: WorryLevel(65) },
+                            Item { worry_level: WorryLevel(75) },
+                            Item { worry_level: WorryLevel(74) },
                         ],
                         operation: Operation::Sum { summand: 6 },
                         test: Test {
-                            predicament: Predicament::Divisible { by: 19 },
-                            on_true_target: MonkeyIndex(2),
-                            on_false_target: MonkeyIndex(0)
+                            condition_divisible_by: 19,
+                            target_if_true: MonkeyIndex(2),
+                            target_if_false: MonkeyIndex(0)
                         },
                         count_of_item_inspections: 0,
                     },
                     Monkey {
                         index: MonkeyIndex(2),
                         items: vec![
-                            Item { worry_level: 79 },
-                            Item { worry_level: 60 },
-                            Item { worry_level: 97 },
+                            Item { worry_level: WorryLevel(79) },
+                            Item { worry_level: WorryLevel(60) },
+                            Item { worry_level: WorryLevel(97) },
                         ],
                         operation: Operation::ProductByFactorOld,
                         test: Test {
-                            predicament: Predicament::Divisible { by: 13 },
-                            on_true_target: MonkeyIndex(1),
-                            on_false_target: MonkeyIndex(3)
+                            condition_divisible_by: 13,
+                            target_if_true: MonkeyIndex(1),
+                            target_if_false: MonkeyIndex(3)
                         },
                         count_of_item_inspections: 0,
                     },
                     Monkey {
                         index: MonkeyIndex(3),
                         items: vec![
-                            Item { worry_level: 74 },
+                            Item { worry_level: WorryLevel(74) },
                         ],
                         operation: Operation::Sum { summand: 3 },
                         test: Test {
-                            predicament: Predicament::Divisible { by: 17 },
-                            on_true_target: MonkeyIndex(0),
-                            on_false_target: MonkeyIndex(1)
+                            condition_divisible_by: 17,
+                            target_if_true: MonkeyIndex(0),
+                            target_if_false: MonkeyIndex(1)
                         },
                         count_of_item_inspections: 0,
                     },
@@ -393,7 +369,7 @@ Monkey 3:
         let mut monkey_keep_away = MonkeyKeepAway::from_str(TEST_INPUT)?;
 
         // Act
-        monkey_keep_away.run();
+        monkey_keep_away.run(WorryType::WithRelief);
 
         // Assert
         let items_per_monkey = monkey_keep_away
@@ -405,23 +381,58 @@ Monkey 3:
             items_per_monkey,
             vec![
                 vec![
-                    Item { worry_level: 20 },
-                    Item { worry_level: 23 },
-                    Item { worry_level: 27 },
-                    Item { worry_level: 26 }
+                    Item {
+                        worry_level: WorryLevel(20)
+                    },
+                    Item {
+                        worry_level: WorryLevel(23)
+                    },
+                    Item {
+                        worry_level: WorryLevel(27)
+                    },
+                    Item {
+                        worry_level: WorryLevel(26)
+                    }
                 ],
                 vec![
-                    Item { worry_level: 2080 },
-                    Item { worry_level: 25 },
-                    Item { worry_level: 167 },
-                    Item { worry_level: 207 },
-                    Item { worry_level: 401 },
-                    Item { worry_level: 1046 }
+                    Item {
+                        worry_level: WorryLevel(2080)
+                    },
+                    Item {
+                        worry_level: WorryLevel(25)
+                    },
+                    Item {
+                        worry_level: WorryLevel(167)
+                    },
+                    Item {
+                        worry_level: WorryLevel(207)
+                    },
+                    Item {
+                        worry_level: WorryLevel(401)
+                    },
+                    Item {
+                        worry_level: WorryLevel(1046)
+                    }
                 ],
                 vec![],
                 vec![],
             ]
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_part_3_default() -> anyhow::Result<()> {
+        // Arrange
+        let mut monkey_keep_away = MonkeyKeepAway::from_str(TEST_INPUT)?;
+
+        // Act
+        monkey_keep_away.run_for_rounds(10_000, WorryType::NoRelief);
+        let level_of_monkey_business = monkey_keep_away.calculate_level_of_monkey_business();
+
+        // Assert
+        assert_eq!(level_of_monkey_business, 2_713_310_158);
 
         Ok(())
     }
