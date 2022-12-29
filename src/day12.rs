@@ -3,11 +3,17 @@
 use std::collections::HashMap;
 use std::str::FromStr;
 
+use rayon::iter::IntoParallelIterator;
+use rayon::iter::ParallelIterator;
+
 const INPUT: &str = include_str!("../inputs/day12.input");
 
 fn main() {
     let part_1_solution = calculate_minimal_path_length(INPUT);
     println!("part_1_solution: {part_1_solution:?}");
+
+    let part_2_solution = calculate_fewest_steps_required(INPUT);
+    println!("part_2_solution: {part_2_solution:?}");
 }
 
 fn calculate_minimal_path_length(input: &str) -> u64 {
@@ -15,6 +21,31 @@ fn calculate_minimal_path_length(input: &str) -> u64 {
     let predecessors = dijkstra(&graph, graph.start);
     let shortest_path = calculate_shortest_path(graph.end, &predecessors);
     shortest_path.len() as u64 - 1
+}
+
+fn calculate_fewest_steps_required(input: &str) -> u64 {
+    let graph = Graph::from_str(input).unwrap();
+    let possible_starts = graph
+        .inner
+        .iter()
+        .enumerate()
+        .flat_map(|(row, a)| {
+            a.iter()
+                .enumerate()
+                .filter(|(_, b)| b.elevation == 0)
+                .map(move |(column, _)| Position { x: column, y: row })
+        })
+        .collect::<Vec<_>>();
+    println!("Have {} possible starts...", possible_starts.len());
+    let m = possible_starts
+        .into_par_iter()
+        .map(|start| {
+            let predecessors = dijkstra(&graph, start);
+            let shortest_path = calculate_shortest_path(graph.end, &predecessors);
+            shortest_path.len() as u64 - 1
+        })
+        .collect::<Vec<_>>();
+    m.into_iter().filter(|d| *d > 0).min().unwrap()
 }
 
 struct Graph {
@@ -200,5 +231,14 @@ abdefghi";
 
         // Assert
         assert_eq!(minimal_path_length, 31);
+    }
+
+    #[test]
+    fn test_part_2_default() {
+        // Act
+        let minimal_path_length = calculate_fewest_steps_required(TEST_INPUT);
+
+        // Assert
+        assert_eq!(minimal_path_length, 29);
     }
 }
