@@ -15,30 +15,25 @@ fn main() {
 }
 
 fn calculate_sum_of_indices_of_pairs_in_right_order(input: &str) -> u64 {
-    let packet_pairs = PacketPairs::from_str(input).unwrap();
-    packet_pairs
+    PacketPairs::from_str(input)
+        .unwrap()
         .0
         .into_iter()
         .enumerate()
-        .filter(|(_, a)| a.is_in_right_order())
+        .filter(|(_, packet_pair)| packet_pair.is_in_right_order())
         .map(|(index, _)| index + 1)
         .sum::<usize>() as u64
 }
 
 fn calculate_decoder_key_for_distress_signal(input: &str) -> u64 {
-    let packet_pairs = PacketPairs::from_str(input).unwrap();
-    let mut m = packet_pairs
-        .0
-        .into_iter()
-        .flat_map(|k| vec![k.left, k.right])
-        .collect::<Vec<_>>();
     let divider_packets = vec![
         Packet(vec![PacketData::List(vec![PacketData::Integer(2)])]),
         Packet(vec![PacketData::List(vec![PacketData::Integer(6)])]),
     ];
-    m.extend_from_slice(divider_packets.as_slice());
-    m.sort_by(
-        |a, b| match list_of_packet_data_in_right_order(&a.0, &b.0) {
+    let mut packets = PacketPairs::from_str(input).unwrap().flatten();
+    packets.extend_from_slice(divider_packets.as_slice());
+    packets.sort_by(
+        |left, right| match list_of_packet_data_in_right_order(&left.0, &right.0) {
             Order::Correct => std::cmp::Ordering::Less,
             Order::Incorrect => std::cmp::Ordering::Greater,
             Order::Indecisive => std::cmp::Ordering::Equal,
@@ -46,13 +41,28 @@ fn calculate_decoder_key_for_distress_signal(input: &str) -> u64 {
     );
     divider_packets
         .iter()
-        .map(|divider_packet| m.iter().find_position(|a| *a == divider_packet).unwrap().0)
-        .map(|k| k + 1)
+        .map(|divider_packet| {
+            packets
+                .iter()
+                .find_position(|packet| *packet == divider_packet)
+                .unwrap()
+                .0
+        })
+        .map(|index| index + 1)
         .product::<usize>() as u64
 }
 
 #[derive(Debug, Clone)]
 struct PacketPairs(Vec<PacketPair>);
+
+impl PacketPairs {
+    fn flatten(self) -> Vec<Packet> {
+        self.0
+            .into_iter()
+            .flat_map(|k| vec![k.left, k.right])
+            .collect::<Vec<_>>()
+    }
+}
 
 impl FromStr for PacketPairs {
     type Err = anyhow::Error;
@@ -152,7 +162,7 @@ impl FromStr for Packet {
         let pd = PacketData::from_str(s).unwrap();
         match pd {
             PacketData::List(list) => Ok(Self(list)),
-            PacketData::Integer(_) => todo!(),
+            PacketData::Integer(_) => unimplemented!(),
         }
     }
 }
