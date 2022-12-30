@@ -12,25 +12,34 @@ fn main() -> anyhow::Result<()> {
     // Part 1 - 2 hours 36 minutes 58 seconds
     let part_1_solution = calculate_sum_of_indices_of_pairs_in_right_order(INPUT)
         .context("Failed calculating part 1 solution.")?;
-    println!("part_1_solution: {part_1_solution:?}");
+    println!("part_1_solution: {part_1_solution}");
 
     // Part 2 - 21 minutes 56 seconds
     let part_2_solution = calculate_decoder_key_for_distress_signal(INPUT)
         .context("Failed calculating part 2 solution.")?;
-    println!("part_2_solution: {part_2_solution:?}");
+    println!("part_2_solution: {part_2_solution}");
 
     Ok(())
 }
 
 fn calculate_sum_of_indices_of_pairs_in_right_order(input: &str) -> anyhow::Result<u64> {
-    Ok(PacketPairs::from_str(input)
-        .context("Could not parse PacketPairs from string.")?
-        .0
-        .into_iter()
-        .enumerate()
-        .filter(|(_, packet_pair)| packet_pair.is_in_right_order())
-        .map(|(index, _)| index + 1)
-        .sum::<usize>() as u64)
+    u64::try_from(
+        PacketPairs::from_str(input)
+            .context("Could not parse PacketPairs from string.")?
+            .0
+            .into_iter()
+            .enumerate()
+            .filter(|&(_, ref packet_pair): &(usize, PacketPair)| packet_pair.is_in_right_order())
+            .map(|(index, _): (usize, PacketPair)| {
+                index.checked_add(1).with_context(|| {
+                    format!("Could not calculate position for packet index #{index}.")
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .sum::<usize>(),
+    )
+    .context("Sum of indices of pairs does not fit into u64 (from usize).")
 }
 
 fn calculate_decoder_key_for_distress_signal(input: &str) -> anyhow::Result<u64> {
@@ -49,19 +58,28 @@ fn calculate_decoder_key_for_distress_signal(input: &str) -> anyhow::Result<u64>
             PacketDataOrder::Indecisive => Ordering::Equal,
         },
     );
-    Ok(divider_packets
-        .iter()
-        .map(|divider_packet| {
-            packets
-                .iter()
-                .find_position(|packet| *packet == divider_packet)
-                .with_context(|| format!("Could not find position for {divider_packet:?}."))
-                .map(|(index, _)| index)
-        })
-        .collect::<Result<Vec<usize>, _>>()?
-        .into_iter()
-        .map(|index| index + 1)
-        .product::<usize>() as u64)
+    u64::try_from(
+        divider_packets
+            .iter()
+            .map(|divider_packet| {
+                packets
+                    .iter()
+                    .find_position(|packet| *packet == divider_packet)
+                    .with_context(|| format!("Could not find position for {divider_packet:?}."))
+                    .map(|(index, _)| index)
+            })
+            .collect::<Result<Vec<usize>, _>>()?
+            .into_iter()
+            .map(|index| {
+                index.checked_add(1).with_context(|| {
+                    format!("Could not calculate position for packet index #{index}.")
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .product::<usize>(),
+    )
+    .context("Product of divider packet indices does not fit into u64 (from usize).")
 }
 
 #[derive(Debug, Clone)]
@@ -121,20 +139,20 @@ fn order_of_two_packet_data_slices(left: &[PacketData], right: &[PacketData]) ->
 
 fn order_of_two_packet_data(left: &PacketData, right: &PacketData) -> PacketDataOrder {
     match (left, right) {
-        (PacketData::Integer(left_integer), PacketData::Integer(right_integer)) => {
-            match left_integer.cmp(right_integer) {
+        (&PacketData::Integer(left_integer), &PacketData::Integer(right_integer)) => {
+            match left_integer.cmp(&right_integer) {
                 Ordering::Less => PacketDataOrder::Correct,
                 Ordering::Greater => PacketDataOrder::Incorrect,
                 Ordering::Equal => PacketDataOrder::Indecisive,
             }
         }
-        (PacketData::Integer(left_integer), PacketData::List(right_list)) => {
-            order_of_two_packet_data_slices(&[PacketData::Integer(*left_integer)], right_list)
+        (&PacketData::Integer(left_integer), &PacketData::List(ref right_list)) => {
+            order_of_two_packet_data_slices(&[PacketData::Integer(left_integer)], right_list)
         }
-        (PacketData::List(left_list), PacketData::Integer(right_integer)) => {
-            order_of_two_packet_data_slices(left_list, &[PacketData::Integer(*right_integer)])
+        (&PacketData::List(ref left_list), &PacketData::Integer(right_integer)) => {
+            order_of_two_packet_data_slices(left_list, &[PacketData::Integer(right_integer)])
         }
-        (PacketData::List(left_list), PacketData::List(right_list)) => {
+        (&PacketData::List(ref left_list), &PacketData::List(ref right_list)) => {
             order_of_two_packet_data_slices(left_list, right_list)
         }
     }
@@ -182,7 +200,7 @@ impl FromStr for Packet {
             PacketData::from_str(s).context("Could not parse PacketData from string.")?;
         match packet_data {
             PacketData::List(packet_data_vec) => Ok(Self(packet_data_vec)),
-            PacketData::Integer(_) => unimplemented!(),
+            PacketData::Integer(_) => Err(anyhow::anyhow!("Top-Level integer is not allowed.")),
         }
     }
 }
@@ -194,7 +212,7 @@ impl Display for Packet {
             if index > 0 {
                 write!(f, ",")?;
             }
-            write!(f, "{}", packet_data)?;
+            write!(f, "{packet_data}")?;
         }
         write!(f, "]")
     }
@@ -211,7 +229,7 @@ impl FromStr for PacketData {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s.starts_with('[') {
-            let mut opened_brackets = 0;
+            let mut opened_brackets: i64 = 0;
             let mut optional_main_bracket_open_index: Option<usize> = None;
             let mut optional_main_bracket_close_index: Option<usize> = None;
             let mut indices_of_commas: Vec<usize> = Vec::new();
@@ -221,10 +239,12 @@ impl FromStr for PacketData {
                         if optional_main_bracket_open_index.is_none() {
                             optional_main_bracket_open_index = Some(index);
                         }
-                        opened_brackets += 1;
+                        opened_brackets = opened_brackets.checked_add(1)
+                            .with_context(|| format!("Could not increase opened_brackets during character '{character}' at index #{index}."))?;
                     }
                     ']' => {
-                        opened_brackets -= 1;
+                        opened_brackets = opened_brackets.checked_sub(1)
+                            .with_context(|| format!("Could not decrease opened_brackets during character '{character}' at index #{index}."))?;
                         if opened_brackets == 0 && optional_main_bracket_close_index.is_none() {
                             optional_main_bracket_close_index = Some(index);
                         }
@@ -238,16 +258,26 @@ impl FromStr for PacketData {
                 }
             }
             if opened_brackets != 0 {
-                panic!("Uneven bracket number {opened_brackets}");
+                return Err(anyhow::anyhow!(
+                    "Found uneven bracket number of {opened_brackets}."
+                ));
             }
             let main_bracket_open_index = optional_main_bracket_open_index
                 .context("Could not find main bracket open index.")?;
             let main_bracket_close_index = optional_main_bracket_close_index
                 .context("Could not find main bracket close index.")?;
+            let skip_chars = main_bracket_open_index.checked_add(1).with_context(|| {
+                format!("Failed increasing {main_bracket_open_index} while calculating skip_chars.")
+            })?;
+            let take_chars = main_bracket_close_index
+                .checked_sub(main_bracket_open_index)
+                .ok_or_else(|| anyhow::anyhow!("Failed doing subtraction `{main_bracket_close_index} - {main_bracket_open_index}` while calculating take_chars."))?
+                .checked_sub(1)
+                .ok_or_else(|| anyhow::anyhow!("Failed decrementing result of `{main_bracket_close_index} - {main_bracket_open_index}` while calculating take_chars."))?;
             let text_between_main_brackets = s
                 .chars()
-                .skip(main_bracket_open_index + 1)
-                .take(main_bracket_close_index - main_bracket_open_index - 1)
+                .skip(skip_chars)
+                .take(take_chars)
                 .collect::<String>();
 
             if text_between_main_brackets.is_empty() {
@@ -256,11 +286,15 @@ impl FromStr for PacketData {
                 let mut parts = Vec::new();
                 let mut last_offset = 0;
                 for comma in indices_of_commas {
+                    let parts_take_length = comma.checked_sub(last_offset)
+                        .ok_or_else(|| anyhow::anyhow!("Failed subtracting `{comma} - {last_offset}` while calculating parts_take_length for comma at {comma}."))?
+                        .checked_sub(1)
+                        .ok_or_else(|| anyhow::anyhow!("Failed decrementing result of `{comma} - {last_offset}` while calculating parts_take_length for comma at {comma}."))?;
                     parts.push(
                         text_between_main_brackets
                             .chars()
                             .skip(last_offset)
-                            .take(comma - last_offset - 1)
+                            .take(parts_take_length)
                             .collect::<String>(),
                     );
                     last_offset = comma;
@@ -295,22 +329,23 @@ impl FromStr for PacketData {
 
 impl Display for PacketData {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PacketData::List(packet_data_vec) => {
+        match *self {
+            PacketData::List(ref packet_data_vec) => {
                 write!(f, "[")?;
                 for (index, packet_data) in packet_data_vec.iter().enumerate() {
                     if index > 0 {
                         write!(f, ",")?;
                     }
-                    write!(f, "{}", packet_data)?;
+                    write!(f, "{packet_data}")?;
                 }
                 write!(f, "]")
             }
-            PacketData::Integer(integer) => write!(f, "{}", integer),
+            PacketData::Integer(integer) => write!(f, "{integer}"),
         }
     }
 }
 
+#[allow(clippy::panic_in_result_fn)]
 #[cfg(test)]
 mod tests {
     use super::*;
