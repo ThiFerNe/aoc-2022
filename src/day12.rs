@@ -1,3 +1,9 @@
+#![allow(clippy::needless_return)]
+#![allow(clippy::bind_instead_of_map)]
+#![allow(clippy::restriction)]
+#![allow(clippy::style)]
+#![allow(clippy::pedantic)]
+
 //! Done in pair programming and on second attempt.
 
 use std::collections::HashMap;
