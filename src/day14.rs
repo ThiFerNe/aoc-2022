@@ -1,7 +1,11 @@
+use std::collections::HashSet;
 use std::fmt::Display;
+use std::io::Write;
 use std::str::FromStr;
 
 use itertools::Itertools;
+
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
 const INPUT: &str = include_str!("../inputs/day14.input");
 
@@ -9,6 +13,10 @@ fn main() {
     // Part 1
     let part_1_solution = calculate_units_of_sand_staying_on_rocks(INPUT);
     println!("part_1_solution: {part_1_solution}");
+
+    // Part 2
+    let part_2_solution = calculate_units_of_sand_staying_on_rocks_with_infinite_rock_bottom(INPUT);
+    println!("part_2_solution: {part_2_solution}");
 }
 
 fn calculate_units_of_sand_staying_on_rocks(input: &str) -> u64 {
@@ -19,11 +27,24 @@ fn calculate_units_of_sand_staying_on_rocks(input: &str) -> u64 {
         .len() as u64
 }
 
+fn calculate_units_of_sand_staying_on_rocks_with_infinite_rock_bottom(input: &str) -> u64 {
+    let m = VerticalCaveSlice::parse_rock_scan(Position2D { x: 500, y: 0 }, input)
+        .unwrap()
+        .with_infinite_rock_bottom()
+        .steps_till_full_of_sand();
+    std::fs::File::create("out")
+        .unwrap()
+        .write_all(m.to_string().as_bytes())
+        .unwrap();
+    m.sand.len() as u64
+}
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct VerticalCaveSlice {
     sand_start: Position2D,
-    rocks: Vec<Position2D>,
-    sand: Vec<Position2D>,
+    rocks: HashSet<Position2D>,
+    sand: HashSet<Position2D>,
+    infinite_rock_bottom_y: Option<i64>,
 }
 
 impl VerticalCaveSlice {
@@ -39,8 +60,9 @@ impl VerticalCaveSlice {
                         .flat_map(|(from, to)| from.to(&to))
                 })
                 .unique()
-                .collect::<Vec<_>>(),
-            sand: Vec::new(),
+                .collect::<HashSet<_>>(),
+            sand: HashSet::new(),
+            infinite_rock_bottom_y: None,
         })
     }
 
@@ -61,51 +83,70 @@ impl VerticalCaveSlice {
             let boundaries = from.rock_boundaries().unwrap().expand_by(&from.sand_start);
             let sand = from
                 .sand
-                .iter()
+                .par_iter()
                 .filter_map(|previous_position| {
                     let down = previous_position.down();
                     let down_left = previous_position.down_left();
                     let down_right = previous_position.down_right();
-                    let new_position = if !from.rocks.contains(&down) && !from.sand.contains(&down)
-                    {
+                    let is_not_blocked =
+                        |new: &Position2D| !from.rocks.contains(new) && !from.sand.contains(new);
+                    let new_position = if is_not_blocked(&down) {
                         down
-                    } else if !from.rocks.contains(&down_left) && !from.sand.contains(&down_left) {
+                    } else if is_not_blocked(&down_left) {
                         down_left
-                    } else if !from.rocks.contains(&down_right) && !from.sand.contains(&down_right)
-                    {
+                    } else if is_not_blocked(&down_right) {
                         down_right
                     } else {
                         *previous_position
                     };
-                    boundaries.contains(&new_position).then_some(new_position)
+                    match &from.infinite_rock_bottom_y {
+                        Some(infinite_rock_bottom_y) => {
+                            if new_position.y >= *infinite_rock_bottom_y {
+                                Some(*previous_position)
+                            } else {
+                                Some(new_position)
+                            }
+                        }
+                        None => boundaries.contains(&new_position).then_some(new_position),
+                    }
                 })
-                .collect::<Vec<_>>();
+                .collect::<HashSet<_>>();
             VerticalCaveSlice {
                 sand_start: from.sand_start,
                 rocks: from.rocks.clone(),
                 sand,
+                infinite_rock_bottom_y: from.infinite_rock_bottom_y.clone(),
             }
         }
 
         let mut new_state = flow(self);
         if new_state == *self {
-            new_state.sand.push(new_state.sand_start);
+            if !new_state.sand.contains(&new_state.sand_start) {
+                new_state.sand.insert(new_state.sand_start);
+            }
         }
         new_state
     }
 
     fn steps_till_sand_resting(&self) -> Self {
         let mut steps = 0;
+        let started_with_filled_sand_start = self.sand.contains(&self.sand_start);
 
         let mut current = self.clone();
         loop {
             let next = current.step();
             steps += 1;
+
             if next == current {
                 return next;
             }
-            if !current.sand.contains(&current.sand_start) && next.sand.contains(&next.sand_start) {
-                if steps > 1 {
+
+            let created_new_sand =
+                !current.sand.contains(&self.sand_start) && next.sand.contains(&next.sand_start);
+            if created_new_sand {
+                if started_with_filled_sand_start {
+                    return current;
+                } else if steps > 1 {
                     return current;
                 }
             }
@@ -115,24 +156,38 @@ impl VerticalCaveSlice {
 
     fn steps_till_full_of_sand(&self) -> Self {
         let mut current = self.clone();
+        let mut last = std::time::Instant::now();
         loop {
             let next = current.steps_till_sand_resting();
+            if last.elapsed().as_secs_f64() > 1f64 || next.sand.len() % 10 == 0 {
+                println!("{} Sand", next.sand.len());
+            }
+            last = std::time::Instant::now();
             if current == next {
                 return next;
             }
             current = next;
         }
     }
+
+    fn with_infinite_rock_bottom(mut self) -> Self {
+        self.infinite_rock_bottom_y = Some(self.rock_boundaries().unwrap().bottom + 2);
+        self
+    }
 }
 
 impl Display for VerticalCaveSlice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut boundaries = self.rock_boundaries().unwrap().expand_by(&self.sand_start);
+        for sands in &self.sand {
+            boundaries = boundaries.expand_by(sands);
+        }
         let Boundaries {
             top,
             bottom,
             left,
             right,
-        } = self.rock_boundaries().unwrap().expand_by(&self.sand_start);
+        } = boundaries;
 
         // --- HORIZONTAL AXIS NUMBERS ---
         let mut horizontal_numbers_i64 = vec![left, 500, right];
@@ -176,23 +231,32 @@ impl Display for VerticalCaveSlice {
         }
 
         // --- LINES ---
+        let bottom = match &self.infinite_rock_bottom_y {
+            Some(infinite_rock_bottom_y) => *infinite_rock_bottom_y,
+            None => bottom,
+        };
+
         let top_digits = top.to_string().len();
         let bottom_digits = bottom.to_string().len();
         let max_length_y_axis_digits = bottom_digits.max(top_digits);
 
         for row in top..=bottom {
             writeln!(f)?;
-            write!(f, "{row:>.*} ", max_length_y_axis_digits)?;
+            write!(f, "{row:>width$} ", width = max_length_y_axis_digits)?;
             for column in left..=right {
-                let position = Position2D { x: column, y: row };
-                if self.sand_start == position {
-                    write!(f, "+")?;
-                } else if self.rocks.contains(&position) {
+                if let Some(_) = self.infinite_rock_bottom_y.filter(|y| *y == row) {
                     write!(f, "#")?;
-                } else if self.sand.contains(&position) {
-                    write!(f, "o")?;
                 } else {
-                    write!(f, ".")?;
+                    let position = Position2D { x: column, y: row };
+                    if self.rocks.contains(&position) {
+                        write!(f, "#")?;
+                    } else if self.sand.contains(&position) {
+                        write!(f, "o")?;
+                    } else if self.sand_start == position {
+                        write!(f, "+")?;
+                    } else {
+                        write!(f, ".")?;
+                    }
                 }
             }
         }
@@ -201,7 +265,7 @@ impl Display for VerticalCaveSlice {
     }
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 struct Position2D {
     x: i64,
     y: i64,
@@ -292,6 +356,16 @@ mod tests {
     }
 
     #[test]
+    fn test_part_2_default() {
+        // Act
+        let units_of_sand =
+            calculate_units_of_sand_staying_on_rocks_with_infinite_rock_bottom(TEST_INPUT);
+
+        // Assert
+        assert_eq!(units_of_sand, 93);
+    }
+
+    #[test]
     fn test_vertical_cave_slice_parse_rock_scan() {
         // Act
         let vertical_cave_slice =
@@ -302,7 +376,7 @@ mod tests {
             vertical_cave_slice,
             VerticalCaveSlice {
                 sand_start: Position2D { x: 500, y: 0 },
-                rocks: vec![
+                rocks: HashSet::from([
                     // 498,4 -> 498,6
                     Position2D { x: 498, y: 4 },
                     Position2D { x: 498, y: 5 },
@@ -328,8 +402,9 @@ mod tests {
                     Position2D { x: 499, y: 9 },
                     Position2D { x: 500, y: 9 },
                     Position2D { x: 501, y: 9 },
-                ],
-                sand: Vec::new(),
+                ]),
+                sand: HashSet::new(),
+                infinite_rock_bottom_y: None,
             }
         );
     }
@@ -342,8 +417,6 @@ mod tests {
 
         // Act
         let vertical_cave_slice_string = vertical_cave_slice.to_string();
-
-        println!("{vertical_cave_slice_string}");
 
         // Assert
         assert_eq!(
@@ -402,7 +475,7 @@ mod tests {
         // Arrange
         let vertical_cave_slice_0 =
             VerticalCaveSlice::parse_rock_scan(Position2D { x: 500, y: 0 }, TEST_INPUT).unwrap();
-        assert_eq!(vertical_cave_slice_0.sand, Vec::new());
+        assert_eq!(vertical_cave_slice_0.sand, HashSet::new());
 
         // Act 1
         let vertical_cave_slice_1 = vertical_cave_slice_0.step();
@@ -416,7 +489,7 @@ mod tests {
 
         assert_eq!(
             vertical_cave_slice_1.sand,
-            vec![Position2D { x: 500, y: 0 }]
+            HashSet::from([Position2D { x: 500, y: 0 }])
         );
 
         // Act 2
@@ -431,7 +504,7 @@ mod tests {
 
         assert_eq!(
             vertical_cave_slice_2.sand,
-            vec![Position2D { x: 500, y: 1 }]
+            HashSet::from([Position2D { x: 500, y: 1 }])
         );
     }
 
@@ -453,7 +526,7 @@ mod tests {
 
         assert_eq!(
             vertical_cave_slice_1.sand,
-            vec![Position2D { x: 500, y: 8 }]
+            HashSet::from([Position2D { x: 500, y: 8 }])
         );
     }
 
