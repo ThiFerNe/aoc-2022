@@ -5,8 +5,6 @@ use std::str::FromStr;
 
 use itertools::Itertools;
 
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
-
 const INPUT: &str = include_str!("../inputs/day14.input");
 
 fn main() {
@@ -23,7 +21,7 @@ fn calculate_units_of_sand_staying_on_rocks(input: &str) -> u64 {
     VerticalCaveSlice::parse_rock_scan(Position2D { x: 500, y: 0 }, input)
         .unwrap()
         .steps_till_full_of_sand()
-        .sand
+        .still_sand
         .len() as u64
 }
 
@@ -36,14 +34,15 @@ fn calculate_units_of_sand_staying_on_rocks_with_infinite_rock_bottom(input: &st
         .unwrap()
         .write_all(m.to_string().as_bytes())
         .unwrap();
-    m.sand.len() as u64
+    m.still_sand.len() as u64
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct VerticalCaveSlice {
     sand_start: Position2D,
     rocks: HashSet<Position2D>,
-    sand: HashSet<Position2D>,
+    moving_sand: Option<Position2D>,
+    still_sand: HashSet<Position2D>,
     infinite_rock_bottom_y: Option<i64>,
 }
 
@@ -61,7 +60,8 @@ impl VerticalCaveSlice {
                 })
                 .unique()
                 .collect::<HashSet<_>>(),
-            sand: HashSet::new(),
+            moving_sand: None,
+            still_sand: HashSet::new(),
             infinite_rock_bottom_y: None,
         })
     }
@@ -81,68 +81,76 @@ impl VerticalCaveSlice {
     fn step(&self) -> Self {
         fn flow(from: &VerticalCaveSlice) -> VerticalCaveSlice {
             let boundaries = from.rock_boundaries().unwrap().expand_by(&from.sand_start);
-            let sand = from
-                .sand
-                .par_iter()
-                .filter_map(|previous_position| {
-                    let down = previous_position.down();
-                    let down_left = previous_position.down_left();
-                    let down_right = previous_position.down_right();
-                    let is_not_blocked =
-                        |new: &Position2D| !from.rocks.contains(new) && !from.sand.contains(new);
-                    let new_position = if is_not_blocked(&down) {
-                        down
-                    } else if is_not_blocked(&down_left) {
-                        down_left
-                    } else if is_not_blocked(&down_right) {
-                        down_right
-                    } else {
-                        *previous_position
-                    };
+
+            let mut to = from.clone();
+            if let Some(previous_position) = to.moving_sand {
+                let down = previous_position.down();
+                let down_left = previous_position.down_left();
+                let down_right = previous_position.down_right();
+
+                let is_blocked =
+                    |new: &Position2D| from.rocks.contains(new) || from.still_sand.contains(new);
+
+                let (new_position, found_end) = if !is_blocked(&down) {
+                    (down, false)
+                } else if !is_blocked(&down_left) {
+                    (down_left, false)
+                } else if !is_blocked(&down_right) {
+                    (down_right, false)
+                } else {
+                    (previous_position, true)
+                };
+
+                if found_end {
+                    to.still_sand.insert(new_position);
+                    to.moving_sand = None;
+                } else {
                     match &from.infinite_rock_bottom_y {
                         Some(infinite_rock_bottom_y) => {
                             if new_position.y >= *infinite_rock_bottom_y {
-                                Some(*previous_position)
+                                to.still_sand.insert(previous_position);
+                                to.moving_sand = None;
                             } else {
-                                Some(new_position)
+                                to.moving_sand = Some(new_position);
                             }
                         }
-                        None => boundaries.contains(&new_position).then_some(new_position),
+                        None => {
+                            if boundaries.contains(&new_position) {
+                                to.moving_sand = Some(new_position);
+                            } else {
+                                to.moving_sand = None;
+                            }
+                        }
                     }
-                })
-                .collect::<HashSet<_>>();
-            VerticalCaveSlice {
-                sand_start: from.sand_start,
-                rocks: from.rocks.clone(),
-                sand,
-                infinite_rock_bottom_y: from.infinite_rock_bottom_y.clone(),
+                }
+            } else {
+                to.moving_sand = Some(to.sand_start);
             }
+
+            return to;
         }
 
-        let mut new_state = flow(self);
-        if new_state == *self {
-            if !new_state.sand.contains(&new_state.sand_start) {
-                new_state.sand.insert(new_state.sand_start);
-            }
-        }
-        new_state
+        return flow(self);
     }
 
     fn steps_till_sand_resting(&self) -> Self {
         let mut steps = 0;
-        let started_with_filled_sand_start = self.sand.contains(&self.sand_start);
+        let started_with_filled_sand_start = self.still_sand.contains(&self.sand_start)
+            || match self.moving_sand {
+                Some(moving_sand) => moving_sand == self.sand_start,
+                None => false,
+            };
 
         let mut current = self.clone();
         loop {
             let next = current.step();
             steps += 1;
 
-            if next == current {
+            if next.moving_sand.is_none() {
                 return next;
             }
 
-            let created_new_sand =
-                !current.sand.contains(&self.sand_start) && next.sand.contains(&next.sand_start);
+            let created_new_sand = current.moving_sand.is_none() && next.moving_sand.is_some();
             if created_new_sand {
                 if started_with_filled_sand_start {
                     return current;
@@ -159,8 +167,8 @@ impl VerticalCaveSlice {
         let mut last = std::time::Instant::now();
         loop {
             let next = current.steps_till_sand_resting();
-            if last.elapsed().as_secs_f64() > 1f64 || next.sand.len() % 10 == 0 {
-                println!("{} Sand", next.sand.len());
+            if last.elapsed().as_secs_f64() > 1f64 || next.still_sand.len() % 2000 == 0 {
+                println!("{} Sand", next.still_sand.len());
             }
             last = std::time::Instant::now();
             if current == next {
@@ -179,7 +187,7 @@ impl VerticalCaveSlice {
 impl Display for VerticalCaveSlice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut boundaries = self.rock_boundaries().unwrap().expand_by(&self.sand_start);
-        for sands in &self.sand {
+        for sands in &self.still_sand {
             boundaries = boundaries.expand_by(sands);
         }
         let Boundaries {
@@ -250,7 +258,7 @@ impl Display for VerticalCaveSlice {
                     let position = Position2D { x: column, y: row };
                     if self.rocks.contains(&position) {
                         write!(f, "#")?;
-                    } else if self.sand.contains(&position) {
+                    } else if self.still_sand.contains(&position) {
                         write!(f, "o")?;
                     } else if self.sand_start == position {
                         write!(f, "+")?;
@@ -403,7 +411,8 @@ mod tests {
                     Position2D { x: 500, y: 9 },
                     Position2D { x: 501, y: 9 },
                 ]),
-                sand: HashSet::new(),
+                moving_sand: None,
+                still_sand: HashSet::new(),
                 infinite_rock_bottom_y: None,
             }
         );
@@ -475,7 +484,7 @@ mod tests {
         // Arrange
         let vertical_cave_slice_0 =
             VerticalCaveSlice::parse_rock_scan(Position2D { x: 500, y: 0 }, TEST_INPUT).unwrap();
-        assert_eq!(vertical_cave_slice_0.sand, HashSet::new());
+        assert_eq!(vertical_cave_slice_0.still_sand, HashSet::new());
 
         // Act 1
         let vertical_cave_slice_1 = vertical_cave_slice_0.step();
@@ -488,9 +497,10 @@ mod tests {
         );
 
         assert_eq!(
-            vertical_cave_slice_1.sand,
-            HashSet::from([Position2D { x: 500, y: 0 }])
+            vertical_cave_slice_1.moving_sand,
+            Some(Position2D { x: 500, y: 0 })
         );
+        assert_eq!(vertical_cave_slice_1.still_sand, HashSet::new(),);
 
         // Act 2
         let vertical_cave_slice_2 = vertical_cave_slice_1.step();
@@ -503,9 +513,10 @@ mod tests {
         );
 
         assert_eq!(
-            vertical_cave_slice_2.sand,
-            HashSet::from([Position2D { x: 500, y: 1 }])
+            vertical_cave_slice_2.moving_sand,
+            Some(Position2D { x: 500, y: 1 })
         );
+        assert_eq!(vertical_cave_slice_2.still_sand, HashSet::new(),);
     }
 
     #[test]
@@ -525,7 +536,7 @@ mod tests {
         );
 
         assert_eq!(
-            vertical_cave_slice_1.sand,
+            vertical_cave_slice_1.still_sand,
             HashSet::from([Position2D { x: 500, y: 8 }])
         );
     }
